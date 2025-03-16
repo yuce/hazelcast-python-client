@@ -1,9 +1,10 @@
+import asyncio
 import logging
 import sys
 import threading
 import types
-
 import typing
+from asyncio import isfuture as asyncio_isfuture, events
 
 from hazelcast.util import AtomicInteger, re_raise
 
@@ -24,6 +25,12 @@ class Future(typing.Generic[ResultType]):
     def __init__(self):
         self._callbacks = []
         self._event = _Event()
+
+    def cancelled(self):
+        return False
+
+    def cancel(self):
+        raise NotImplementedError
 
     def set_result(self, result: ResultType) -> None:
         """Sets the result of the Future.
@@ -314,3 +321,72 @@ def combine_futures(futures: typing.Sequence[Future]) -> Future:
         future.add_done_callback(make_callback(i))
 
     return combined
+
+
+# NOTE: The following functions were adapted from Python 3.12 standard library source code
+
+def wrap_future(future: Future, *, loop=None):
+    """Wrap hazelcast.future.Future object."""
+    if asyncio_isfuture(future):
+        return future
+    assert isinstance(future, Future), \
+        f'hazelcast.future.Future is expected, got {future!r}'
+    if loop is None:
+        loop = events.get_event_loop()
+    new_future = loop.create_future()
+    _chain_future(future, new_future)
+    return new_future
+
+
+def _chain_future(source: "Future", destination: asyncio.Future):
+    """Chain two futures so that when one completes, so does the other.
+
+    The result (or exception) of source will be copied to destination.
+    If destination is cancelled, source gets cancelled too.
+    The source must be hazelcast.future.Future and destination must be asyncio.Future
+    """
+    dest_loop = destination.get_loop()
+
+    def _set_state(future, other):
+        _copy_future_state(other, future)
+
+    def _call_check_cancel(destination):
+        if destination.cancelled():
+            # XXX: Will raise, since hazelcast.future.Future does not have cancellation
+            source.cancel()
+
+    def _call_set_state(source):
+        if destination.cancelled() or dest_loop.is_closed():
+            return
+        dest_loop.call_soon_threadsafe(_set_state, destination, source)
+
+    destination.add_done_callback(_call_check_cancel)
+    source.add_done_callback(_call_set_state)
+
+
+def _copy_future_state(source, dest):
+    """Internal helper to copy state from another Future.
+
+    The other Future may be a hazelcast.future.Future.
+    """
+    assert source.done()
+    if dest.cancelled():
+        return
+    assert not dest.done()
+    if source.cancelled():
+        dest.cancel()
+    else:
+        exception = source.exception()
+        if exception is not None:
+            dest.set_exception(_convert_future_exc(exception))
+        else:
+            result = source.result()
+            dest.set_result(result)
+
+
+def _convert_future_exc(exc):
+    # XXX: this function is supposed to return asyncio exceptions
+    # * exceptions.CancelledError(*exc.args)
+    # * exceptions.TimeoutError(*exc.args)
+    # * exceptions.InvalidStateError(*exc.args)
+    return exc
