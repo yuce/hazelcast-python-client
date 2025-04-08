@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 import unittest
@@ -116,16 +117,18 @@ class MapTest(SingleMemberTestCase):
         }
         return config
 
-    def setUp(self):
-        self.map = self.client.get_map(random_string()).blocking()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.map = await self.client.get_map(random_string())
 
-    def tearDown(self):
-        self.map.destroy()
+    async def asyncTearDown(self):
+        await self.map.destroy()
+        await super().asyncTearDown()
 
-    def test_add_entry_listener_item_added(self):
+    async def test_add_entry_listener_item_added(self):
         collector = event_collector()
-        self.map.add_entry_listener(include_value=True, added_func=collector)
-        self.map.put("key", "value")
+        await self.map.add_entry_listener(include_value=True, added_func=collector)
+        await self.map.put("key", "value")
 
         def assert_event():
             self.assertEqual(len(collector.events), 1)
@@ -134,11 +137,11 @@ class MapTest(SingleMemberTestCase):
 
         self.assertTrueEventually(assert_event, 5)
 
-    def test_add_entry_listener_item_removed(self):
+    async def test_add_entry_listener_item_removed(self):
         collector = event_collector()
-        self.map.add_entry_listener(include_value=True, removed_func=collector)
-        self.map.put("key", "value")
-        self.map.remove("key")
+        await self.map.add_entry_listener(include_value=True, removed_func=collector)
+        await self.map.put("key", "value")
+        await self.map.remove("key")
 
         def assert_event():
             self.assertEqual(len(collector.events), 1)
@@ -149,11 +152,11 @@ class MapTest(SingleMemberTestCase):
 
         self.assertTrueEventually(assert_event, 5)
 
-    def test_add_entry_listener_item_updated(self):
+    async def test_add_entry_listener_item_updated(self):
         collector = event_collector()
-        self.map.add_entry_listener(include_value=True, updated_func=collector)
-        self.map.put("key", "value")
-        self.map.put("key", "new_value")
+        await self.map.add_entry_listener(include_value=True, updated_func=collector)
+        await self.map.put("key", "value")
+        await self.map.put("key", "new_value")
 
         def assert_event():
             self.assertEqual(len(collector.events), 1)
@@ -168,10 +171,10 @@ class MapTest(SingleMemberTestCase):
 
         self.assertTrueEventually(assert_event, 5)
 
-    def test_add_entry_listener_item_expired(self):
+    async def test_add_entry_listener_item_expired(self):
         collector = event_collector()
-        self.map.add_entry_listener(include_value=True, expired_func=collector)
-        self.map.put("key", "value", ttl=0.1)
+        await self.map.add_entry_listener(include_value=True, expired_func=collector)
+        await self.map.put("key", "value", ttl=0.1)
 
         def assert_event():
             self.assertEqual(len(collector.events), 1)
@@ -182,11 +185,11 @@ class MapTest(SingleMemberTestCase):
 
         self.assertTrueEventually(assert_event, 10)
 
-    def test_add_entry_listener_with_key(self):
+    async def test_add_entry_listener_with_key(self):
         collector = event_collector()
-        self.map.add_entry_listener(key="key1", include_value=True, added_func=collector)
-        self.map.put("key2", "value2")
-        self.map.put("key1", "value1")
+        await self.map.add_entry_listener(key="key1", include_value=True, added_func=collector)
+        await self.map.put("key2", "value2")
+        await self.map.put("key1", "value1")
 
         def assert_event():
             self.assertEqual(len(collector.events), 1)
@@ -197,13 +200,13 @@ class MapTest(SingleMemberTestCase):
 
         self.assertTrueEventually(assert_event, 5)
 
-    def test_add_entry_listener_with_predicate(self):
+    async def test_add_entry_listener_with_predicate(self):
         collector = event_collector()
-        self.map.add_entry_listener(
+        await self.map.add_entry_listener(
             predicate=sql("this == value1"), include_value=True, added_func=collector
         )
-        self.map.put("key2", "value2")
-        self.map.put("key1", "value1")
+        await self.map.put("key2", "value2")
+        await self.map.put("key1", "value1")
 
         def assert_event():
             self.assertEqual(len(collector.events), 1)
@@ -214,15 +217,15 @@ class MapTest(SingleMemberTestCase):
 
         self.assertTrueEventually(assert_event, 5)
 
-    def test_add_entry_listener_with_key_and_predicate(self):
+    async def test_add_entry_listener_with_key_and_predicate(self):
         collector = event_collector()
-        self.map.add_entry_listener(
+        await self.map.add_entry_listener(
             key="key1", predicate=sql("this == value3"), include_value=True, added_func=collector
         )
-        self.map.put("key2", "value2")
-        self.map.put("key1", "value1")
-        self.map.remove("key1")
-        self.map.put("key1", "value3")
+        await self.map.put("key2", "value2")
+        await self.map.put("key1", "value1")
+        await self.map.remove("key1")
+        await self.map.put("key1", "value3")
 
         def assert_event():
             self.assertEqual(len(collector.events), 1)
@@ -233,10 +236,10 @@ class MapTest(SingleMemberTestCase):
 
         self.assertTrueEventually(assert_event, 5)
 
-    def test_add_index(self):
-        self.map.add_index(attributes=["this"])
-        self.map.add_index(attributes=["this"], index_type=IndexType.HASH)
-        self.map.add_index(
+    async def test_add_index(self):
+        await self.map.add_index(attributes=["this"])
+        await self.map.add_index(attributes=["this"], index_type=IndexType.HASH)
+        await self.map.add_index(
             attributes=["this"],
             index_type=IndexType.BITMAP,
             bitmap_index_options={
@@ -244,139 +247,122 @@ class MapTest(SingleMemberTestCase):
             },
         )
 
-    def test_add_index_duplicate_fields(self):
+    async def test_add_index_duplicate_fields(self):
         with self.assertRaises(ValueError):
-            self.map.add_index(attributes=["this", "this"])
+            await self.map.add_index(attributes=["this", "this"])
 
-    def test_add_index_invalid_attribute(self):
+    async def test_add_index_invalid_attribute(self):
         with self.assertRaises(ValueError):
-            self.map.add_index(attributes=["this.x."])
+            await self.map.add_index(attributes=["this.x."])
 
-    def test_clear(self):
-        self.fill_map()
+    async def test_clear(self):
+        await self.fill_map()
+        await self.map.clear()
+        self.assertEqual(await self.map.size(), 0)
 
-        self.map.clear()
+    async def test_contains_key(self):
+        await self.fill_map()
+        self.assertTrue(await self.map.contains_key("key-1"))
+        self.assertFalse(await self.map.contains_key("key-10"))
 
-        self.assertEqual(self.map.size(), 0)
+    async def test_contains_value(self):
+        await self.fill_map()
+        self.assertTrue(await self.map.contains_value("value-1"))
+        self.assertFalse(await self.map.contains_value("value-10"))
 
-    def test_contains_key(self):
-        self.fill_map()
+    async def test_delete(self):
+        await self.fill_map()
+        await self.map.delete("key-1")
+        self.assertEqual(await self.map.size(), 9)
+        self.assertFalse(await self.map.contains_key("key-1"))
 
-        self.assertTrue(self.map.contains_key("key-1"))
-        self.assertFalse(self.map.contains_key("key-10"))
+    async def test_entry_set(self):
+        entries = await self.fill_map()
+        self.assertCountEqual(await self.map.entry_set(), list(entries.items()))
 
-    def test_contains_value(self):
-        self.fill_map()
+    async def test_entry_set_with_predicate(self):
+        await self.fill_map()
+        self.assertEqual(await self.map.entry_set(sql("this == 'value-1'")), [("key-1", "value-1")])
 
-        self.assertTrue(self.map.contains_value("value-1"))
-        self.assertFalse(self.map.contains_value("value-10"))
+    async def test_evict(self):
+        await self.fill_map()
+        await self.map.evict("key-1")
+        self.assertEqual(await self.map.size(), 9)
+        self.assertFalse(await self.map.contains_key("key-1"))
 
-    def test_delete(self):
-        self.fill_map()
+    async def test_evict_all(self):
+        await self.fill_map()
+        await self.map.evict_all()
+        self.assertEqual(await self.map.size(), 0)
 
-        self.map.delete("key-1")
-
-        self.assertEqual(self.map.size(), 9)
-        self.assertFalse(self.map.contains_key("key-1"))
-
-    def test_entry_set(self):
-        entries = self.fill_map()
-
-        self.assertCountEqual(self.map.entry_set(), list(entries.items()))
-
-    def test_entry_set_with_predicate(self):
-        self.fill_map()
-
-        self.assertEqual(self.map.entry_set(sql("this == 'value-1'")), [("key-1", "value-1")])
-
-    def test_evict(self):
-        self.fill_map()
-
-        self.map.evict("key-1")
-
-        self.assertEqual(self.map.size(), 9)
-        self.assertFalse(self.map.contains_key("key-1"))
-
-    def test_evict_all(self):
-        self.fill_map()
-
-        self.map.evict_all()
-
-        self.assertEqual(self.map.size(), 0)
-
-    def test_execute_on_entries(self):
-        m = self.fill_map()
+    async def test_execute_on_entries(self):
+        m = await self.fill_map()
         expected_entry_set = [(key, "processed") for key in m]
+        values = await self.map.execute_on_entries(EntryProcessor("processed"))
 
-        values = self.map.execute_on_entries(EntryProcessor("processed"))
-
-        self.assertCountEqual(expected_entry_set, self.map.entry_set())
+        self.assertCountEqual(expected_entry_set, await self.map.entry_set())
         self.assertCountEqual(expected_entry_set, values)
 
-    def test_execute_on_entries_with_predicate(self):
-        m = self.fill_map()
+    async def test_execute_on_entries_with_predicate(self):
+        m = await self.fill_map()
         expected_entry_set = [(key, "processed") if key < "key-5" else (key, m[key]) for key in m]
         expected_values = [(key, "processed") for key in m if key < "key-5"]
-
-        values = self.map.execute_on_entries(EntryProcessor("processed"), sql("__key < 'key-5'"))
-
-        self.assertCountEqual(expected_entry_set, self.map.entry_set())
+        values = await self.map.execute_on_entries(EntryProcessor("processed"), sql("__key < 'key-5'"))
+        self.assertCountEqual(expected_entry_set, await self.map.entry_set())
         self.assertCountEqual(expected_values, values)
 
-    def test_execute_on_key(self):
-        self.map.put("test-key", "test-value")
-        value = self.map.execute_on_key("test-key", EntryProcessor("processed"))
-
-        self.assertEqual("processed", self.map.get("test-key"))
+    async def test_execute_on_key(self):
+        await self.map.put("test-key", "test-value")
+        value = await self.map.execute_on_key("test-key", EntryProcessor("processed"))
+        self.assertEqual("processed", await self.map.get("test-key"))
         self.assertEqual("processed", value)
 
-    def test_execute_on_keys(self):
-        m = self.fill_map()
+    async def test_execute_on_keys(self):
+        m = await self.fill_map()
         expected_entry_set = [(key, "processed") for key in m]
-
-        values = self.map.execute_on_keys(list(m.keys()), EntryProcessor("processed"))
-
-        self.assertCountEqual(expected_entry_set, self.map.entry_set())
+        values = await self.map.execute_on_keys(list(m.keys()), EntryProcessor("processed"))
+        self.assertCountEqual(expected_entry_set, await self.map.entry_set())
         self.assertCountEqual(expected_entry_set, values)
 
-    def test_execute_on_keys_with_empty_key_list(self):
-        m = self.fill_map()
+    async def test_execute_on_keys_with_empty_key_list(self):
+        m = await self.fill_map()
         expected_entry_set = [(key, m[key]) for key in m]
-
-        values = self.map.execute_on_keys([], EntryProcessor("processed"))
-
+        values = await self.map.execute_on_keys([], EntryProcessor("processed"))
         self.assertEqual([], values)
-        self.assertCountEqual(expected_entry_set, self.map.entry_set())
+        self.assertCountEqual(expected_entry_set, await self.map.entry_set())
 
-    def test_flush(self):
-        self.fill_map()
+    async def test_flush(self):
+        await self.fill_map()
+        await self.map.flush()
 
-        self.map.flush()
+    async def test_force_unlock(self):
+        async def force_unlock():
+            await self.map.force_unlock("key")
 
-    def test_force_unlock(self):
-        self.map.put("key", "value")
-        self.map.lock("key")
+        await self.map.put("key", "value")
+        await self.map.lock("key")
+        task = asyncio.create_task(force_unlock())
 
-        self.start_new_thread(lambda: self.map.force_unlock("key"))
+        async def assertion():
+            self.assertFalse(await self.map.is_locked("key"))
 
-        self.assertTrueEventually(lambda: self.assertFalse(self.map.is_locked("key")))
+        await task
+        await self.asyncAssertTrueEventually(assertion)
 
-    def test_get_all(self):
-        expected = self.fill_map(1000)
-
-        actual = self.map.get_all(list(expected.keys()))
-
+    async def test_get_all(self):
+        expected = await self.fill_map(1000)
+        actual = await self.map.get_all(list(expected.keys()))
         self.assertCountEqual(expected, actual)
 
-    def test_get_all_when_no_keys(self):
-        self.assertEqual(self.map.get_all([]), {})
+    async def test_get_all_when_no_keys(self):
+        self.assertEqual(await self.map.get_all([]), {})
 
-    def test_get_entry_view(self):
-        self.map.put("key", "value")
-        self.map.get("key")
-        self.map.put("key", "new_value")
+    async def test_get_entry_view(self):
+        await self.map.put("key", "value")
+        await self.map.get("key")
+        await self.map.put("key", "new_value")
 
-        entry_view = self.map.get_entry_view("key")
+        entry_view = await self.map.get_entry_view("key")
 
         self.assertEqual(entry_view.key, "key")
         self.assertEqual(entry_view.value, "new_value")
@@ -395,267 +381,250 @@ class MapTest(SingleMemberTestCase):
         self.assertIsNotNone(entry_view.ttl)
         self.assertIsNotNone(entry_view.max_idle)
 
-    def test_is_empty(self):
-        self.map.put("key", "value")
+    async def test_is_empty(self):
+        await self.map.put("key", "value")
+        self.assertFalse(await self.map.is_empty())
+        await self.map.clear()
+        self.assertTrue(await self.map.is_empty())
 
-        self.assertFalse(self.map.is_empty())
+    async def test_is_locked(self):
+        await self.map.put("key", "value")
+        self.assertFalse(await self.map.is_locked("key"))
+        await self.map.lock("key")
+        self.assertTrue(await self.map.is_locked("key"))
+        await self.map.unlock("key")
+        self.assertFalse(await self.map.is_locked("key"))
 
-        self.map.clear()
+    async def test_key_set(self):
+        keys = list((await self.fill_map()).keys())
+        self.assertCountEqual(await self.map.key_set(), keys)
 
-        self.assertTrue(self.map.is_empty())
+    async def test_key_set_with_predicate(self):
+        await self.fill_map()
+        self.assertEqual(await self.map.key_set(sql("this == 'value-1'")), ["key-1"])
 
-    def test_is_locked(self):
-        self.map.put("key", "value")
-
-        self.assertFalse(self.map.is_locked("key"))
-        self.map.lock("key")
-        self.assertTrue(self.map.is_locked("key"))
-        self.map.unlock("key")
-        self.assertFalse(self.map.is_locked("key"))
-
-    def test_key_set(self):
-        keys = list(self.fill_map().keys())
-
-        self.assertCountEqual(self.map.key_set(), keys)
-
-    def test_key_set_with_predicate(self):
-        self.fill_map()
-
-        self.assertEqual(self.map.key_set(sql("this == 'value-1'")), ["key-1"])
-
-    def test_lock(self):
-        self.map.put("key", "value")
+    async def test_lock(self):
+        await self.map.put("key", "value")
 
         t = self.start_new_thread(lambda: self.map.lock("key"))
         t.join()
 
-        self.assertFalse(self.map.try_put("key", "new_value", timeout=0.01))
+        self.assertFalse(await self.map.try_put("key", "new_value", timeout=0.01))
 
-    def test_put_all(self):
+    async def test_put_all(self):
         m = {"key-%d" % x: "value-%d" % x for x in range(0, 1000)}
-        self.map.put_all(m)
+        await self.map.put_all(m)
 
-        entries = self.map.entry_set()
+        entries = await self.map.entry_set()
 
         self.assertCountEqual(entries, m.items())
 
-    def test_put_all_when_no_keys(self):
-        self.assertIsNone(self.map.put_all({}))
+    async def test_put_all_when_no_keys(self):
+        self.assertIsNone(await self.map.put_all({}))
 
-    def test_put_if_absent_when_missing_value(self):
-        returned_value = self.map.put_if_absent("key", "new_value")
+    async def test_put_if_absent_when_missing_value(self):
+        returned_value = await self.map.put_if_absent("key", "new_value")
 
         self.assertIsNone(returned_value)
-        self.assertEqual(self.map.get("key"), "new_value")
+        self.assertEqual(await self.map.get("key"), "new_value")
 
-    def test_put_if_absent_when_existing_value(self):
-        self.map.put("key", "value")
-
-        returned_value = self.map.put_if_absent("key", "new_value")
-
+    async def test_put_if_absent_when_existing_value(self):
+        await self.map.put("key", "value")
+        returned_value = await self.map.put_if_absent("key", "new_value")
         self.assertEqual(returned_value, "value")
-        self.assertEqual(self.map.get("key"), "value")
+        self.assertEqual(await self.map.get("key"), "value")
 
-    def test_put_get(self):
-        self.assertIsNone(self.map.put("key", "value"))
-        self.assertEqual(self.map.get("key"), "value")
+    async def test_put_get(self):
+        self.assertIsNone(await self.map.put("key", "value"))
+        self.assertEqual(await self.map.get("key"), "value")
 
-    def test_put_get_large_payload(self):
+    async def test_put_get_large_payload(self):
         # The fix for reading large payloads is introduced in 4.2.1
         # See https://github.com/hazelcast/hazelcast-python-client/pull/436
         skip_if_client_version_older_than(self, "4.2.1")
 
         payload = bytearray(os.urandom(16 * 1024 * 1024))
         start = get_current_timestamp()
-        self.assertIsNone(self.map.put("key", payload))
-        self.assertEqual(self.map.get("key"), payload)
+        self.assertIsNone(await self.map.put("key", payload))
+        self.assertEqual(await self.map.get("key"), payload)
         self.assertLessEqual(get_current_timestamp() - start, 5)
 
-    def test_put_get2(self):
+    async def test_put_get2(self):
         val = "x" * 5000
+        self.assertIsNone(await self.map.put("key-x", val))
+        self.assertEqual(await self.map.get("key-x"), val)
 
-        self.assertIsNone(self.map.put("key-x", val))
-        self.assertEqual(self.map.get("key-x"), val)
+    async def test_put_when_existing(self):
+        await self.map.put("key", "value")
+        self.assertEqual(await self.map.put("key", "new_value"), "value")
+        self.assertEqual(await self.map.get("key"), "new_value")
 
-    def test_put_when_existing(self):
-        self.map.put("key", "value")
-        self.assertEqual(self.map.put("key", "new_value"), "value")
-        self.assertEqual(self.map.get("key"), "new_value")
+    async def test_put_transient(self):
+        await self.map.put_transient("key", "value")
+        self.assertEqual(await self.map.get("key"), "value")
 
-    def test_put_transient(self):
-        self.map.put_transient("key", "value")
-
-        self.assertEqual(self.map.get("key"), "value")
-
-    def test_remove(self):
-        self.map.put("key", "value")
-
-        removed = self.map.remove("key")
+    async def test_remove(self):
+        await self.map.put("key", "value")
+        removed = await self.map.remove("key")
         self.assertEqual(removed, "value")
-        self.assertEqual(0, self.map.size())
-        self.assertFalse(self.map.contains_key("key"))
+        self.assertEqual(0, await self.map.size())
+        self.assertFalse(await self.map.contains_key("key"))
 
-    def test_remove_all_with_none_predicate(self):
+    async def test_remove_all_with_none_predicate(self):
         skip_if_client_version_older_than(self, "5.2.0")
 
         with self.assertRaises(AssertionError):
-            self.map.remove_all(None)
+            await self.map.remove_all(None)
 
-    def test_remove_all(self):
+    async def test_remove_all(self):
         skip_if_client_version_older_than(self, "5.2.0")
 
-        self.fill_map()
-        self.map.remove_all(predicate=sql("__key > 'key-7'"))
-        self.assertEqual(self.map.size(), 8)
+        await self.fill_map()
+        await self.map.remove_all(predicate=sql("__key > 'key-7'"))
+        self.assertEqual(await self.map.size(), 8)
 
-    def test_remove_if_same_when_same(self):
-        self.map.put("key", "value")
+    async def test_remove_if_same_when_same(self):
+        await self.map.put("key", "value")
+        self.assertTrue(await self.map.remove_if_same("key", "value"))
+        self.assertFalse(await self.map.contains_key("key"))
 
-        self.assertTrue(self.map.remove_if_same("key", "value"))
-        self.assertFalse(self.map.contains_key("key"))
+    async def test_remove_if_same_when_different(self):
+        await self.map.put("key", "value")
+        self.assertFalse(await self.map.remove_if_same("key", "another_value"))
+        self.assertTrue(await self.map.contains_key("key"))
 
-    def test_remove_if_same_when_different(self):
-        self.map.put("key", "value")
-
-        self.assertFalse(self.map.remove_if_same("key", "another_value"))
-        self.assertTrue(self.map.contains_key("key"))
-
-    def test_remove_entry_listener(self):
+    async def test_remove_entry_listener(self):
         collector = event_collector()
-        reg_id = self.map.add_entry_listener(added_func=collector)
+        reg_id = await self.map.add_entry_listener(added_func=collector)
 
-        self.map.put("key", "value")
+        await self.map.put("key", "value")
         self.assertTrueEventually(lambda: self.assertEqual(len(collector.events), 1))
-        self.map.remove_entry_listener(reg_id)
-        self.map.put("key2", "value")
+        await self.map.remove_entry_listener(reg_id)
+        await self.map.put("key2", "value")
 
-        time.sleep(1)
+        await asyncio.sleep(1)
         self.assertEqual(len(collector.events), 1)
 
-    def test_remove_entry_listener_with_none_id(self):
+    async def test_remove_entry_listener_with_none_id(self):
         with self.assertRaises(AssertionError) as cm:
-            self.map.remove_entry_listener(None)
+            await self.map.remove_entry_listener(None)
         e = cm.exception
         self.assertEqual(e.args[0], "None user_registration_id is not allowed!")
 
-    def test_replace(self):
-        self.map.put("key", "value")
-
-        replaced = self.map.replace("key", "new_value")
+    async def test_replace(self):
+        await self.map.put("key", "value")
+        replaced = await self.map.replace("key", "new_value")
         self.assertEqual(replaced, "value")
-        self.assertEqual(self.map.get("key"), "new_value")
+        self.assertEqual(await self.map.get("key"), "new_value")
 
-    def test_replace_if_same_when_same(self):
-        self.map.put("key", "value")
+    async def test_replace_if_same_when_same(self):
+        await self.map.put("key", "value")
+        self.assertTrue(await self.map.replace_if_same("key", "value", "new_value"))
+        self.assertEqual(await self.map.get("key"), "new_value")
 
-        self.assertTrue(self.map.replace_if_same("key", "value", "new_value"))
-        self.assertEqual(self.map.get("key"), "new_value")
+    async def test_replace_if_same_when_different(self):
+        await self.map.put("key", "value")
+        self.assertFalse(await self.map.replace_if_same("key", "another_value", "new_value"))
+        self.assertEqual(await self.map.get("key"), "value")
 
-    def test_replace_if_same_when_different(self):
-        self.map.put("key", "value")
+    async def test_set(self):
+        await self.map.set("key", "value")
 
-        self.assertFalse(self.map.replace_if_same("key", "another_value", "new_value"))
-        self.assertEqual(self.map.get("key"), "value")
+        self.assertEqual(await self.map.get("key"), "value")
 
-    def test_set(self):
-        self.map.set("key", "value")
+    async def test_set_ttl(self):
+        await self.map.put("key", "value")
+        await self.map.set_ttl("key", 0.1)
 
-        self.assertEqual(self.map.get("key"), "value")
-
-    def test_set_ttl(self):
-        self.map.put("key", "value")
-        self.map.set_ttl("key", 0.1)
-
-        def evicted():
-            self.assertFalse(self.map.contains_key("key"))
+        async def evicted():
+            self.assertFalse(await self.map.contains_key("key"))
 
         self.assertTrueEventually(evicted, 5)
 
-    def test_size(self):
-        self.fill_map()
+    async def test_size(self):
+        await self.fill_map()
 
-        self.assertEqual(10, self.map.size())
+        self.assertEqual(10, await self.map.size())
 
-    def test_try_lock_when_unlocked(self):
-        self.assertTrue(self.map.try_lock("key"))
-        self.assertTrue(self.map.is_locked("key"))
+    async def test_try_lock_when_unlocked(self):
+        self.assertTrue(await self.map.try_lock("key"))
+        self.assertTrue(await self.map.is_locked("key"))
 
-    def test_try_lock_when_locked(self):
+    async def test_try_lock_when_locked(self):
         t = self.start_new_thread(lambda: self.map.lock("key"))
         t.join()
-        self.assertFalse(self.map.try_lock("key", timeout=0.1))
+        self.assertFalse(await self.map.try_lock("key", timeout=0.1))
 
-    def test_try_put_when_unlocked(self):
-        self.assertTrue(self.map.try_put("key", "value"))
-        self.assertEqual(self.map.get("key"), "value")
+    async def test_try_put_when_unlocked(self):
+        self.assertTrue(await self.map.try_put("key", "value"))
+        self.assertEqual(await self.map.get("key"), "value")
 
-    def test_try_put_when_locked(self):
+    async def test_try_put_when_locked(self):
         t = self.start_new_thread(lambda: self.map.lock("key"))
         t.join()
-        self.assertFalse(self.map.try_put("key", "value", timeout=0.1))
+        self.assertFalse(await self.map.try_put("key", "value", timeout=0.1))
 
-    def test_try_remove_when_unlocked(self):
-        self.map.put("key", "value")
-        self.assertTrue(self.map.try_remove("key"))
-        self.assertIsNone(self.map.get("key"))
+    async def test_try_remove_when_unlocked(self):
+        await self.map.put("key", "value")
+        self.assertTrue(await self.map.try_remove("key"))
+        self.assertIsNone(await self.map.get("key"))
 
-    def test_try_remove_when_locked(self):
-        self.map.put("key", "value")
+    async def test_try_remove_when_locked(self):
+        await self.map.put("key", "value")
         t = self.start_new_thread(lambda: self.map.lock("key"))
         t.join()
-        self.assertFalse(self.map.try_remove("key", timeout=0.1))
+        self.assertFalse(await self.map.try_remove("key", timeout=0.1))
 
-    def test_unlock(self):
-        self.map.lock("key")
-        self.assertTrue(self.map.is_locked("key"))
-        self.map.unlock("key")
-        self.assertFalse(self.map.is_locked("key"))
+    async def test_unlock(self):
+        await self.map.lock("key")
+        self.assertTrue(await self.map.is_locked("key"))
+        await self.map.unlock("key")
+        self.assertFalse(await self.map.is_locked("key"))
 
-    def test_unlock_when_no_lock(self):
+    async def test_unlock_when_no_lock(self):
         with self.assertRaises(HazelcastError):
-            self.map.unlock("key")
+            await self.map.unlock("key")
 
-    def test_values(self):
-        values = list(self.fill_map().values())
+    async def test_values(self):
+        values = list((await self.fill_map()).values())
 
-        self.assertCountEqual(list(self.map.values()), values)
+        self.assertCountEqual(list(await self.map.values()), values)
 
-    def test_values_with_predicate(self):
-        self.fill_map()
-
-        self.assertEqual(self.map.values(sql("this == 'value-1'")), ["value-1"])
+    async def test_values_with_predicate(self):
+        await self.fill_map()
+        self.assertEqual(await self.map.values(sql("this == 'value-1'")), ["value-1"])
 
     def test_str(self):
         self.assertTrue(str(self.map).startswith("Map"))
 
-    def test_add_interceptor(self):
+    async def test_add_interceptor(self):
         interceptor = MapGetInterceptor(":")
-        registration_id = self.map.add_interceptor(interceptor)
+        registration_id = await self.map.add_interceptor(interceptor)
         self.assertIsNotNone(registration_id)
 
-        self.map.set(1, ")")
-        value = self.map.get(1)
+        await self.map.set(1, ")")
+        value = await self.map.get(1)
         self.assertEqual(":)", value)
 
-    def test_remove_interceptor(self):
+    async def test_remove_interceptor(self):
         skip_if_client_version_older_than(self, "5.0")
 
         interceptor = MapGetInterceptor(":")
-        registration_id = self.map.add_interceptor(interceptor)
+        registration_id = await self.map.add_interceptor(interceptor)
         self.assertIsNotNone(registration_id)
-        self.assertTrue(self.map.remove_interceptor(registration_id))
+        self.assertTrue(await self.map.remove_interceptor(registration_id))
 
         # Unknown registration id should return False
-        self.assertFalse(self.map.remove_interceptor(registration_id))
+        self.assertFalse(await self.map.remove_interceptor(registration_id))
 
         # Make sure that the interceptor is indeed removed
-        self.map.set(1, ")")
-        value = self.map.get(1)
+        await self.map.set(1, ")")
+        value = await self.map.get(1)
         self.assertEqual(")", value)
 
-    def fill_map(self, count=10):
+    async def fill_map(self, count=10):
         m = {"key-%d" % x: "value-%d" % x for x in range(0, count)}
-        self.map.put_all(m)
+        await self.map.put_all(m)
         return m
 
 

@@ -1,8 +1,8 @@
+import asyncio
 import io
 import logging
 import random
 import struct
-import threading
 import time
 import uuid
 
@@ -24,7 +24,6 @@ from hazelcast.errors import (
     IllegalStateError,
     ClientOfflineError,
 )
-from hazelcast.future import ImmediateFuture, ImmediateExceptionFuture
 from hazelcast.invocation import Invocation
 from hazelcast.lifecycle import LifecycleState
 from hazelcast.protocol.client_message import (
@@ -175,9 +174,9 @@ class ConnectionManager:
         self._connection_listeners = []
         self._connect_all_members_timer = None
         self._async_start = config.async_start
-        self._connect_to_cluster_thread_running = False
         self._shuffle_member_list = config.shuffle_member_list
-        self._lock = threading.RLock()
+        self._connect_cluster_handle = None
+        self._lock = asyncio.Lock()
         self._connection_id_generator = AtomicInteger()
         self._labels = frozenset(config.labels)
         self._cluster_id = None
@@ -210,7 +209,7 @@ class ConnectionManager:
                     return connection
 
         # Otherwise iterate over connections and return the first one
-        for connection in list(self.active_connections.values()):
+        for connection in self.active_connections.values():
             return connection
 
         # Failed to get a connection
@@ -260,16 +259,21 @@ class ConnectionManager:
         # Failed to get a connection to a data member.
         return first_connection
 
-    def start(self, load_balancer):
+    async def start(self, load_balancer):
         if self.live:
             return
 
         self.live = True
         self._load_balancer = load_balancer
         self._heartbeat_manager.start()
-        self._connect_to_cluster()
+        await self._connect_to_cluster()
 
-    def shutdown(self):
+    async def shutdown(self):
+        def close_connection(conn):
+            async def close():
+                await conn.close_connection("Hazelcast client is shutting down", None)
+            return asyncio.create_task(close())
+
         if not self.live:
             return
 
@@ -280,26 +284,25 @@ class ConnectionManager:
         self._heartbeat_manager.shutdown()
 
         # Need to create copy of connection values to avoid modification errors on runtime
-        for connection in list(self.active_connections.values()):
-            connection.close_connection("Hazelcast client is shutting down", None)
-
+        close_tasks = [close_connection(conn) for conn in self.active_connections.values()]
+        await asyncio.wait(close_tasks)
         self.active_connections.clear()
         del self._connection_listeners[:]
 
-    def connect_to_all_cluster_members(self, sync_start):
+    async def connect_to_all_cluster_members(self, sync_start):
         if not self._smart_routing_enabled:
             return
 
         if sync_start:
             for member in self._cluster_service.get_members():
                 try:
-                    self._get_or_connect_to_member(member).result()
+                    await self._get_or_connect_to_member(member)
                 except:
                     pass
 
         self._start_connect_all_members_timer()
 
-    def on_connection_close(self, closed_connection):
+    async def on_connection_close(self, closed_connection):
         remote_uuid = closed_connection.remote_uuid
         remote_address = closed_connection.remote_address
 
@@ -314,7 +317,7 @@ class ConnectionManager:
         disconnected = False
         removed = False
         trigger_reconnection = False
-        with self._lock:
+        async with self._lock:
             connection = self.active_connections.get(remote_uuid, None)
             if connection == closed_connection:
                 self.active_connections.pop(remote_uuid, None)
@@ -335,14 +338,15 @@ class ConnectionManager:
             self._lifecycle_service.fire_lifecycle_event(LifecycleState.DISCONNECTED)
 
         if trigger_reconnection:
-            self._trigger_cluster_reconnection()
+            await self._trigger_cluster_reconnection()
 
         if removed:
             for _, on_connection_closed in self._connection_listeners:
                 if on_connection_closed:
                     try:
-                        on_connection_closed(closed_connection)
+                        await on_connection_closed(closed_connection)
                     except:
+                        # TODO: do not catch all!
                         _logger.exception("Exception in connection listener")
         else:
             _logger.debug(
@@ -373,29 +377,25 @@ class ConnectionManager:
         """
         return self._client_state == _ClientState.INITIALIZED_ON_CLUSTER
 
-    def _get_or_connect_to_address(self, address):
+    async def _get_or_connect_to_address(self, address):
         for connection in list(self.active_connections.values()):
             if connection.remote_address == address:
-                return ImmediateFuture(connection)
+                return connection
 
-        try:
-            translated = self._translate(address)
-            connection = self._create_connection(translated)
-            return self._authenticate(connection).continue_with(self._on_auth, connection)
-        except Exception as e:
-            return ImmediateExceptionFuture(e)
+        translated = self._translate(address)
+        connection = await self._create_connection(translated)
+        response = await self._authenticate(connection)
+        return await self._on_auth(response, connection)
 
-    def _get_or_connect_to_member(self, member):
+    async def _get_or_connect_to_member(self, member) -> asyncio.Future:
         connection = self.active_connections.get(member.uuid, None)
         if connection:
-            return ImmediateFuture(connection)
+            return connection
 
-        try:
-            translated = self._translate_member_address(member)
-            connection = self._create_connection(translated)
-            return self._authenticate(connection).continue_with(self._on_auth, connection)
-        except Exception as e:
-            return ImmediateExceptionFuture(e)
+        translated = self._translate_member_address(member)
+        connection = await self._create_connection(translated)
+        response = await self._authenticate(connection)
+        return await self._on_auth(response, connection)
 
     def _create_connection(self, address):
         factory = self._reactor.connection_factory
@@ -427,14 +427,16 @@ class ConnectionManager:
 
         return self._translate(member.address)
 
-    def _trigger_cluster_reconnection(self):
+    async def _trigger_cluster_reconnection(self):
         if self._reconnect_mode == ReconnectMode.OFF:
             _logger.info("Reconnect mode is OFF. Shutting down the client")
             self._shutdown_client()
             return
 
         if self._lifecycle_service.running:
-            self._start_connect_to_cluster_thread()
+            async with self._lock:
+                if self._connect_cluster_handle is None:
+                    self._connect_cluster_handle = asyncio.create_task(self._start_connect_to_cluster_thread())
 
     def _init_wait_strategy(self, config):
         cluster_connect_timeout = config.cluster_connect_timeout
@@ -455,70 +457,64 @@ class ConnectionManager:
     def _start_connect_all_members_timer(self):
         connecting_uuids = set()
 
-        def run():
+        async def run():
+            await asyncio.sleep(1)
             if not self._lifecycle_service.running:
                 return
 
-            for member in self._cluster_service.get_members():
-                member_uuid = member.uuid
+            while True:
+                for member in self._cluster_service.get_members():
+                    member_uuid = member.uuid
 
-                if self.active_connections.get(member_uuid, None):
-                    continue
+                    if self.active_connections.get(member_uuid, None):
+                        continue
 
-                if member_uuid in connecting_uuids:
-                    continue
+                    if member_uuid in connecting_uuids:
+                        continue
 
-                connecting_uuids.add(member_uuid)
-                if not self._lifecycle_service.running:
-                    break
+                    connecting_uuids.add(member_uuid)
+                    if not self._lifecycle_service.running:
+                        break
 
-                # Bind the bound_member_uuid to the value
-                # in this loop iteration
-                def cb(_, bound_member_uuid=member_uuid):
-                    connecting_uuids.discard(bound_member_uuid)
+                    await self._get_or_connect_to_member(member)
+                    connecting_uuids.discard(member_uuid)
 
-                self._get_or_connect_to_member(member).add_done_callback(cb)
+                await asyncio.sleep(1)
 
-            self._connect_all_members_timer = self._reactor.add_timer(1, run)
+        self._connect_all_members_timer = asyncio.create_task(run())
 
-        self._connect_all_members_timer = self._reactor.add_timer(1, run)
-
-    def _connect_to_cluster(self):
+    async def _connect_to_cluster(self):
         if self._async_start:
-            self._start_connect_to_cluster_thread()
+            # self._start_connect_to_cluster_thread()
+            # TODO:
+            raise Exception("_start_connect_to_cluster_thread not supported")
         else:
-            self._sync_connect_to_cluster()
+            await self._sync_connect_to_cluster()
 
-    def _start_connect_to_cluster_thread(self):
-        with self._lock:
-            if self._connect_to_cluster_thread_running:
-                return
-
-            self._connect_to_cluster_thread_running = True
-
-        def run():
-            try:
-                while True:
-                    self._sync_connect_to_cluster()
-                    with self._lock:
-                        if self.active_connections:
-                            self._connect_to_cluster_thread_running = False
-                            return
-            except:
-                _logger.exception("Could not connect to any cluster, shutting down the client")
-                self._shutdown_client()
-
-        t = threading.Thread(target=run, name="hazelcast_async_connection")
-        t.daemon = True
-        t.start()
+    async def _start_connect_to_cluster_thread(self):
+        if self._connect_cluster_handle is None:
+            return
+        try:
+            while True:
+                await self._sync_connect_to_cluster()
+                async with self._lock:
+                    if self.active_connections:
+                        self._connect_cluster_handle = None
+                        return
+                await asyncio.sleep(0.1)
+        except:
+            # TODO: Remove catch all
+            _logger.exception("Could not connect to any cluster, shutting down the client")
+            self._shutdown_client()
 
     def _shutdown_client(self):
         try:
             self._client.shutdown()
         except:
+            # TODO: Remove catch all
             _logger.exception("Exception during client shutdown")
 
-    def _sync_connect_to_cluster(self):
+    async def _sync_connect_to_cluster(self):
         tried_addresses = set()
         self._wait_strategy.reset()
         try:
@@ -531,7 +527,7 @@ class ConnectionManager:
                 for member in members:
                     self._check_client_active()
                     tried_addresses_per_attempt.add(member.address)
-                    connection = self._connect(member, self._get_or_connect_to_member)
+                    connection = await self._connect(member, self._get_or_connect_to_member)
                     if connection:
                         return
 
@@ -542,7 +538,7 @@ class ConnectionManager:
                         continue
 
                     tried_addresses_per_attempt.add(address)
-                    connection = self._connect(address, self._get_or_connect_to_address)
+                    connection = await self._connect(address, self._get_or_connect_to_address)
                     if connection:
                         return
 
@@ -573,10 +569,10 @@ class ConnectionManager:
             msg = "Client is being shutdown"
         raise IllegalStateError(msg)
 
-    def _connect(self, target, get_or_connect_func):
+    async def _connect(self, target, get_or_connect_func):
         _logger.info("Trying to connect to %s", target)
         try:
-            return get_or_connect_func(target).result()
+            return await get_or_connect_func(target)
         except (ClientNotAllowedInClusterError, InvalidConfigurationError) as e:
             _logger.warning("Error during initial connection to %s", target, exc_info=True)
             raise e
@@ -584,7 +580,7 @@ class ConnectionManager:
             _logger.warning("Error during initial connection to %s", target, exc_info=True)
             return None
 
-    def _authenticate(self, connection):
+    async def _authenticate(self, connection):
         client = self._client
         cluster_name = self._config.cluster_name
         client_name = client.name
@@ -615,19 +611,18 @@ class ConnectionManager:
         invocation = Invocation(
             request, connection=connection, urgent=True, response_handler=lambda m: m
         )
-        self._invocation_service.invoke(invocation)
-        return invocation.future
+        return await self._invocation_service.ainvoke(invocation)
 
-    def _on_auth(self, response, connection):
+    async def _on_auth(self, response, connection):
         try:
-            response = client_authentication_codec.decode_response(response.result())
+            response = client_authentication_codec.decode_response(response)
         except Exception as e:
-            connection.close_connection("Failed to authenticate connection", e)
+            await connection.close_connection("Failed to authenticate connection", e)
             raise e
 
         status = response["status"]
         if status == _AuthenticationStatus.AUTHENTICATED:
-            return self._handle_successful_auth(response, connection)
+            return await self._handle_successful_auth(response, connection)
 
         if status == _AuthenticationStatus.CREDENTIALS_FAILED:
             err = AuthenticationError("Authentication failed. Check cluster name and credentials.")
@@ -640,11 +635,11 @@ class ConnectionManager:
                 "Authentication status code not supported. status: %s" % status
             )
 
-        connection.close_connection("Failed to authenticate connection", err)
+        await connection.close_connection("Failed to authenticate connection", err)
         raise err
 
-    def _handle_successful_auth(self, response, connection):
-        with self._lock:
+    async def _handle_successful_auth(self, response, connection):
+        async with self._lock:
             self._check_partition_count(response["partition_count"])
 
             server_version_str = response["server_hazelcast_version"]
@@ -712,12 +707,13 @@ class ConnectionManager:
         for on_connection_opened, _ in self._connection_listeners:
             if on_connection_opened:
                 try:
-                    on_connection_opened(connection)
+                    await on_connection_opened(connection)
                 except:
+                    # TODO: do not catch all!
                     _logger.exception("Exception in connection listener")
 
         if not connection.live:
-            self.on_connection_close(connection)
+            await self.on_connection_close(connection)
 
         return connection
 
@@ -820,34 +816,35 @@ class _HeartbeatManager:
         self._invocation_service = invocation_service
         self._heartbeat_timeout = config.heartbeat_timeout
         self._heartbeat_interval = config.heartbeat_interval
+        self._handle = None
 
     def start(self):
         """Starts sending periodic HeartBeat operations."""
+        self._handle = asyncio.create_task(self._heartbeat())
 
-        def _heartbeat():
-            conn_manager = self._connection_manager
-            if not conn_manager.live:
-                return
-
-            now = time.time()
-            for connection in list(conn_manager.active_connections.values()):
-                self._check_connection(now, connection)
-            self._heartbeat_timer = self._reactor.add_timer(self._heartbeat_interval, _heartbeat)
-
-        self._heartbeat_timer = self._reactor.add_timer(self._heartbeat_interval, _heartbeat)
+    async def _heartbeat(self):
+        loop = asyncio.get_running_loop()
+        conn_manager = self._connection_manager
+        while conn_manager.live:
+            now = loop.time()
+            tasks = [asyncio.create_task(self._check_connection(now, conn)) for conn in conn_manager.active_connections.values()]
+            # TODO: check for errors
+            if tasks:
+                await asyncio.wait(tasks)
+            await asyncio.sleep(self._heartbeat_interval)
 
     def shutdown(self):
         """Stops HeartBeat operations."""
-        if self._heartbeat_timer:
-            self._heartbeat_timer.cancel()
+        if self._handle:
+            self._handle.cancel()
 
-    def _check_connection(self, now, connection):
+    async def _check_connection(self, now, connection):
         if not connection.live:
             return
 
         if (now - connection.last_read_time) > self._heartbeat_timeout:
             _logger.warning("Heartbeat failed over the connection: %s", connection)
-            connection.close_connection(
+            await connection.close_connection(
                 "Heartbeat timed out",
                 TargetDisconnectedError("Heartbeat timed out to connection %s" % connection),
             )
@@ -856,7 +853,7 @@ class _HeartbeatManager:
         if (now - connection.last_write_time) > self._heartbeat_interval:
             request = client_ping_codec.encode_request()
             invocation = Invocation(request, connection=connection, urgent=True)
-            self._invocation_service.invoke(invocation)
+            await self._invocation_service.ainvoke(invocation)
 
 
 _frame_header = struct.Struct("<iH")
@@ -974,7 +971,7 @@ class Connection:
         return True
 
     # Not named close to distinguish it from the asyncore.dispatcher.close.
-    def close_connection(self, reason, cause):
+    async def close_connection(self, reason, cause):
         """Closes the connection.
 
         Args:
@@ -990,8 +987,9 @@ class Connection:
         try:
             self._inner_close()
         except:
+            # TODO: Remove catch all
             _logger.exception("Error while closing the the connection %s", self)
-        self._connection_manager.on_connection_close(self)
+        await self._connection_manager.on_connection_close(self)
 
     def _log_close(self, reason, cause):
         msg = "%s closed. Reason: %s"

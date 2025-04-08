@@ -2,6 +2,7 @@ import logging
 import sys
 import threading
 import typing
+from typing import Awaitable
 
 from hazelcast.cluster import ClusterService, _InternalClusterService
 from hazelcast.compact import CompactSchemaService
@@ -52,8 +53,7 @@ from hazelcast.proxy import (
 )
 from hazelcast.proxy.base import Proxy
 from hazelcast.proxy.map import Map
-from hazelcast.proxy.vector_collection import VectorCollection
-from hazelcast.reactor import AsyncoreReactor
+from hazelcast.reactor_asyncio import AsyncioReactor
 from hazelcast.serialization import SerializationServiceV1
 from hazelcast.sql import SqlService, _InternalSqlService
 from hazelcast.statistics import Statistics
@@ -74,6 +74,12 @@ class HazelcastClient:
     """
 
     _CLIENT_ID = AtomicInteger()
+
+    @classmethod
+    async def create_and_start(cls, config: Config = None, **kwargs) -> "HazelcastClient":
+        client = HazelcastClient(config, **kwargs)
+        await client._start()
+        return client
 
     def __init__(self, config: Config = None, **kwargs):
         """The client can be configured either by:
@@ -123,7 +129,7 @@ class HazelcastClient:
         self._context = _ClientContext()
         client_id = HazelcastClient._CLIENT_ID.get_and_increment()
         self._name = self._create_client_name(client_id)
-        self._reactor = AsyncoreReactor()
+        self._reactor = AsyncioReactor()
         self._serialization_service = SerializationServiceV1(config)
         self._near_cache_manager = NearCacheManager(config, self._serialization_service)
         self._internal_lifecycle_service = _InternalLifecycleService(config)
@@ -200,7 +206,6 @@ class HazelcastClient:
         )
         self._sql_service = SqlService(self._internal_sql_service)
         self._init_context()
-        self._start()
 
     def _init_context(self):
         self._context.init_context(
@@ -221,7 +226,7 @@ class HazelcastClient:
             self._compact_schema_service,
         )
 
-    def _start(self):
+    async def _start(self):
         self._reactor.start()
         try:
             self._internal_lifecycle_service.start()
@@ -229,18 +234,19 @@ class HazelcastClient:
             membership_listeners = self._config.membership_listeners
             self._internal_cluster_service.start(self._connection_manager, membership_listeners)
             self._cluster_view_listener.start()
-            self._connection_manager.start(self._load_balancer)
+            await self._connection_manager.start(self._load_balancer)
             sync_start = not self._config.async_start
             if sync_start:
-                self._internal_cluster_service.wait_initial_member_list_fetched()
-            self._connection_manager.connect_to_all_cluster_members(sync_start)
+                await self._internal_cluster_service.wait_initial_member_list_fetched()
+            await self._connection_manager.connect_to_all_cluster_members(sync_start)
 
             self._listener_service.start()
-            self._invocation_service.add_backup_listener()
+            await self._invocation_service.add_backup_listener()
             self._load_balancer.init(self._cluster_service)
             self._statistics.start()
         except:
-            self.shutdown()
+            # TODO: Remove catch call
+            await self.shutdown()
             raise
         _logger.info("Client started")
 
@@ -288,7 +294,7 @@ class HazelcastClient:
         """
         return self._proxy_manager.get_or_create(LIST_SERVICE, name)
 
-    def get_map(self, name: str) -> Map[KeyType, ValueType]:
+    def get_map(self, name: str) -> typing.Awaitable[Map[KeyType, ValueType]]:
         """Returns the distributed map instance with the specified name.
 
         Args:
@@ -378,7 +384,7 @@ class HazelcastClient:
         """
         return self._proxy_manager.get_or_create(TOPIC_SERVICE, name)
 
-    def create_vector_collection_config(
+    async def create_vector_collection_config(
         self,
         name: str,
         indexes: typing.List[IndexConfig],
@@ -404,10 +410,9 @@ class HazelcastClient:
             merge_batch_size,
         )
         invocation = Invocation(request, response_handler=lambda m: m)
-        self._invocation_service.invoke(invocation)
-        invocation.future.result()
+        await self._invocation_service.ainvoke(invocation)
 
-    def get_vector_collection(self, name: str) -> VectorCollection:
+    def get_vector_collection(self, name: str) -> Awaitable[Proxy]:
         return self._proxy_manager.get_or_create(VECTOR_SERVICE, name)
 
     def new_transaction(
@@ -508,7 +513,7 @@ class HazelcastClient:
 
         return self._proxy_manager.get_distributed_objects()
 
-    def shutdown(self) -> None:
+    async def shutdown(self) -> None:
         """Shuts down this HazelcastClient."""
         with self._shutdown_lock:
             if self._internal_lifecycle_service.running:
@@ -516,7 +521,7 @@ class HazelcastClient:
                 self._internal_lifecycle_service.shutdown()
                 self._proxy_session_manager.shutdown().result()
                 self._near_cache_manager.destroy_near_caches()
-                self._connection_manager.shutdown()
+                await self._connection_manager.shutdown()
                 self._invocation_service.shutdown()
                 self._statistics.shutdown()
                 self._reactor.shutdown()

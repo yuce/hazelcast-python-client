@@ -1,5 +1,5 @@
+import asyncio
 import logging
-import sys
 import time
 import unittest
 from threading import Thread
@@ -75,6 +75,23 @@ class HazelcastTestCase(unittest.TestCase):
 
         raise last_exception
 
+    async def asyncAssertTrueEventually(self, assertion, timeout=30):
+        loop = asyncio.get_running_loop()
+        timeout_time = loop.time() + timeout
+        last_exception = None
+        while loop.time() < timeout_time:
+            try:
+                await assertion()
+                return
+            except AssertionError as e:
+                last_exception = e
+                time.sleep(0.1)
+
+        if last_exception is None:
+            raise Exception("Could not enter the assertion loop!")
+
+        raise last_exception
+
     def assertSetEventually(self, event, timeout=5):
         is_set = event.wait(timeout)
         self.assertTrue(is_set, "Event was not set within %d seconds" % timeout)
@@ -111,7 +128,7 @@ class HazelcastTestCase(unittest.TestCase):
         return t
 
 
-class SingleMemberTestCase(HazelcastTestCase):
+class SingleMemberTestCase(unittest.IsolatedAsyncioTestCase, HazelcastTestCase):
     """
     Test cases where a single member - client combination is needed
     """
@@ -126,11 +143,9 @@ class SingleMemberTestCase(HazelcastTestCase):
         cls.rc = cls.create_rc()
         cls.cluster = cls.create_cluster(cls.rc, cls.configure_cluster())
         cls.member = cls.cluster.start_member()
-        cls.client = hazelcast.HazelcastClient(**cls.configure_client(dict()))
 
     @classmethod
     def tearDownClass(cls):
-        cls.client.shutdown()
         cls.rc.terminateCluster(cls.cluster.id)
         cls.rc.exit()
 
@@ -141,3 +156,9 @@ class SingleMemberTestCase(HazelcastTestCase):
     @classmethod
     def configure_cluster(cls):
         return None
+
+    async def asyncSetUp(self):
+        self.client = await hazelcast.HazelcastClient.create_and_start(**self.configure_client({}))
+
+    async def asyncTearDown(self):
+        await self.client.shutdown()

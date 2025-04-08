@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import threading
 import typing
@@ -132,7 +133,7 @@ class _InternalClusterService:
         self._labels = frozenset(config.labels)
         self._listeners = {}
         self._member_list_snapshot = _EMPTY_SNAPSHOT
-        self._initial_list_fetched = threading.Event()
+        self._initial_list_fetched = asyncio.Event()
 
     def start(self, connection_manager, membership_listeners):
         self._connection_manager = connection_manager
@@ -193,7 +194,7 @@ class _InternalClusterService:
         except KeyError:
             return False
 
-    def wait_initial_member_list_fetched(self):
+    async def wait_initial_member_list_fetched(self):
         """Blocks until the initial member list is fetched from the cluster.
 
         If it is not received within the timeout, an error is raised.
@@ -201,8 +202,12 @@ class _InternalClusterService:
         Raises:
             IllegalStateError: If the member list could not be fetched
         """
-        fetched = self._initial_list_fetched.wait(_INITIAL_MEMBERS_TIMEOUT_SECONDS)
-        if not fetched:
+        async def waiter():
+            await self._initial_list_fetched.wait()
+
+        try:
+            await asyncio.wait_for(waiter(), _INITIAL_MEMBERS_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
             raise IllegalStateError("Could not get initial member list from cluster!")
 
     def clear_member_list_version(self):

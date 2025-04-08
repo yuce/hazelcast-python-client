@@ -1,5 +1,7 @@
+import asyncio
 import itertools
 import typing
+from typing import Awaitable, Any
 
 from hazelcast.aggregator import Aggregator
 from hazelcast.config import IndexUtil, IndexType, IndexConfig
@@ -146,7 +148,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         merged_func: EntryEventCallable = None,
         expired_func: EntryEventCallable = None,
         loaded_func: EntryEventCallable = None,
-    ) -> Future[str]:
+    ) -> Awaitable[str]:
         """Adds a continuous entry listener for this map.
 
         Listener will get notified for map events filtered with given
@@ -328,7 +330,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         index_type: typing.Union[int, str] = IndexType.SORTED,
         name: str = None,
         bitmap_index_options: typing.Dict[str, typing.Any] = None,
-    ) -> Future[None]:
+    ) -> Awaitable[None]:
         """Adds an index to this map for the specified entries so that queries
         can run faster.
 
@@ -390,7 +392,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         request = map_add_index_codec.encode_request(self.name, validated)
         return self._invoke(request)
 
-    def add_interceptor(self, interceptor: typing.Any) -> Future[str]:
+    def add_interceptor(self, interceptor: typing.Any) -> Awaitable[str]:
         """Adds an interceptor for this map.
 
         Added interceptor will intercept operations and execute user defined
@@ -413,7 +415,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
     def aggregate(
         self, aggregator: Aggregator[AggregatorResultType], predicate: Predicate = None
-    ) -> Future[AggregatorResultType]:
+    ) -> Awaitable[AggregatorResultType]:
         """Applies the aggregation logic on map entries and filter the result
         with the predicate, if given.
 
@@ -455,7 +457,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
         return self._invoke(request, handler)
 
-    def clear(self) -> Future[None]:
+    def clear(self) -> Awaitable[None]:
         """Clears the map.
 
         The ``MAP_CLEARED`` event is fired for any registered listeners.
@@ -463,7 +465,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         request = map_clear_codec.encode_request(self.name)
         return self._invoke(request)
 
-    def contains_key(self, key: KeyType) -> Future[bool]:
+    def contains_key(self, key: KeyType) -> Awaitable[bool]:
         """Determines whether this map contains an entry with the key.
 
         Warning:
@@ -486,7 +488,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
         return self._contains_key_internal(key_data)
 
-    def contains_value(self, value: ValueType) -> Future[bool]:
+    def contains_value(self, value: ValueType) -> Awaitable[bool]:
         """Determines whether this map contains one or more keys for the
         specified value.
 
@@ -506,7 +508,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         request = map_contains_value_codec.encode_request(self.name, value_data)
         return self._invoke(request, map_contains_value_codec.decode_response)
 
-    def delete(self, key: KeyType) -> Future[None]:
+    def delete(self, key: KeyType) -> Awaitable[None]:
         """Removes the mapping for a key from this map if it is present
         (optional operation).
 
@@ -538,7 +540,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
     def entry_set(
         self, predicate: Predicate = None
-    ) -> Future[typing.List[typing.Tuple[KeyType, ValueType]]]:
+    ) -> Awaitable[typing.List[typing.Tuple[KeyType, ValueType]]]:
         """Returns a list clone of the mappings contained in this map.
 
         Warning:
@@ -589,7 +591,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
         return self._invoke(request, handler)
 
-    def evict(self, key: KeyType) -> Future[bool]:
+    def evict(self, key: KeyType) -> Awaitable[bool]:
         """Evicts the specified key from this map.
 
         Warning:
@@ -611,7 +613,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
         return self._evict_internal(key_data)
 
-    def evict_all(self) -> Future[None]:
+    def evict_all(self) -> Awaitable[None]:
         """Evicts all keys from this map except the locked ones.
 
         The ``EVICT_ALL`` event is fired for any registered listeners.
@@ -621,7 +623,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
     def execute_on_entries(
         self, entry_processor: typing.Any, predicate: Predicate = None
-    ) -> Future[typing.List[typing.Any]]:
+    ) -> Awaitable[typing.List[typing.Any]]:
         """Applies the user defined EntryProcessor to all the entries in the
         map or entries in the map which satisfies the predicate if provided.
         Returns the results mapped by each key in the map.
@@ -670,7 +672,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
         return self._invoke(request, handler)
 
-    def execute_on_key(self, key: KeyType, entry_processor: typing.Any) -> Future[typing.Any]:
+    def execute_on_key(self, key: KeyType, entry_processor: Any) -> Awaitable[Any]:
         """Applies the user defined EntryProcessor to the entry mapped by the
         key. Returns the object which is the result of EntryProcessor's
         process method.
@@ -695,9 +697,9 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
         return self._execute_on_key_internal(key_data, entry_processor_data)
 
-    def execute_on_keys(
+    async def execute_on_keys(
         self, keys: typing.Sequence[KeyType], entry_processor: typing.Any
-    ) -> Future[typing.List[typing.Any]]:
+    ) -> typing.List[typing.Any]:
         """Applies the user defined EntryProcessor to the entries mapped by the
         collection of keys. Returns the results mapped by each key in the
         collection.
@@ -715,7 +717,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
             entry process.
         """
         if len(keys) == 0:
-            return ImmediateFuture([])
+            return []
 
         try:
             key_list = []
@@ -734,14 +736,14 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         request = map_execute_on_keys_codec.encode_request(
             self.name, entry_processor_data, key_list
         )
-        return self._invoke(request, handler)
+        return await self._invoke(request, handler)
 
-    def flush(self) -> Future[None]:
+    def flush(self) -> Awaitable[None]:
         """Flushes all the local dirty entries."""
         request = map_flush_codec.encode_request(self.name)
         return self._invoke(request)
 
-    def force_unlock(self, key: KeyType) -> Future[None]:
+    def force_unlock(self, key: KeyType) -> Awaitable[None]:
         """Releases the lock for the specified key regardless of the lock
         owner.
 
@@ -767,7 +769,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         )
         return self._invoke_on_key(request, key_data)
 
-    def get(self, key: KeyType) -> Future[typing.Optional[ValueType]]:
+    def get(self, key: KeyType) -> Awaitable[typing.Optional[ValueType]]:
         """Returns the value for the specified key, or ``None`` if this map
         does not contain this key.
 
@@ -799,7 +801,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
         return self._get_internal(key_data)
 
-    def get_all(self, keys: typing.Sequence[KeyType]) -> Future[typing.Dict[KeyType, ValueType]]:
+    async def get_all(self, keys: typing.Sequence[KeyType]) -> typing.Dict[KeyType, ValueType]:
         """Returns the entries for the given keys.
 
         Warning:
@@ -820,7 +822,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         """
         check_not_none(keys, "keys can't be None")
         if not keys:
-            return ImmediateFuture({})
+            return {}
 
         partition_service = self._context.partition_service
         partition_to_keys: typing.Dict[int, typing.Dict[KeyType, Data]] = {}
@@ -838,9 +840,9 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
             except KeyError:
                 partition_to_keys[partition_id] = {key: key_data}
 
-        return self._get_all_internal(partition_to_keys)
+        return await self._get_all_internal(partition_to_keys)
 
-    def get_entry_view(self, key: KeyType) -> Future[SimpleEntryView[KeyType, ValueType]]:
+    def get_entry_view(self, key: KeyType) -> Awaitable[SimpleEntryView[KeyType, ValueType]]:
         """Returns the EntryView for the specified key.
 
         Warning:
@@ -879,7 +881,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         request = map_get_entry_view_codec.encode_request(self.name, key_data, thread_id())
         return self._invoke_on_key(request, key_data, handler)
 
-    def is_empty(self) -> Future[bool]:
+    def is_empty(self) -> Awaitable[bool]:
         """Returns whether this map contains no key-value mappings or not.
 
         Returns:
@@ -889,7 +891,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         request = map_is_empty_codec.encode_request(self.name)
         return self._invoke(request, map_is_empty_codec.decode_response)
 
-    def is_locked(self, key: KeyType) -> Future[bool]:
+    def is_locked(self, key: KeyType) -> Awaitable[bool]:
         """Checks the lock for the specified key.
 
         Warning:
@@ -912,7 +914,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         request = map_is_locked_codec.encode_request(self.name, key_data)
         return self._invoke_on_key(request, key_data, map_is_locked_codec.decode_response)
 
-    def key_set(self, predicate: Predicate = None) -> Future[typing.List[ValueType]]:
+    def key_set(self, predicate: Predicate = None) -> Awaitable[typing.List[ValueType]]:
         """Returns a List clone of the keys contained in this map or the keys
         of the entries filtered with the predicate if provided.
 
@@ -1085,7 +1087,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
     def put(
         self, key: KeyType, value: ValueType, ttl: float = None, max_idle: float = None
-    ) -> Future[typing.Optional[ValueType]]:
+    ) -> Awaitable[typing.Optional[ValueType]]:
         """Associates the specified value with the specified key in this map.
 
         If the map previously contained a mapping for the key, the old value is
@@ -1127,7 +1129,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
         return self._put_internal(key_data, value_data, ttl, max_idle)
 
-    def put_all(self, map: typing.Dict[KeyType, ValueType]) -> Future[None]:
+    async def put_all(self, map: typing.Dict[KeyType, ValueType]) -> None:
         """Copies all the mappings from the specified map to this map.
 
         No atomicity guarantees are given. In the case of a failure, some
@@ -1138,7 +1140,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         """
         check_not_none(map, "map can't be None")
         if not map:
-            return ImmediateFuture(None)
+            return
 
         partition_service = self._context.partition_service
         partition_map: typing.Dict[int, typing.List[typing.Tuple[Data, Data]]] = {}
@@ -1157,15 +1159,14 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
             except KeyError:
                 partition_map[partition_id] = [entry]
 
-        futures = []
+        coros = []
         for partition_id, entry_list in partition_map.items():
             request = map_put_all_codec.encode_request(
                 self.name, entry_list, False
             )  # TODO trigger map loader
-            future = self._invoke_on_partition(request, partition_id)
-            futures.append(future)
-
-        return combine_futures(futures)
+            coro = self._invoke_on_partition(request, partition_id)
+            coros.append(coro)
+        await asyncio.gather(*coros)
 
     def put_if_absent(
         self, key: KeyType, value: ValueType, ttl: float = None, max_idle: float = None
@@ -1434,9 +1435,10 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
         return self._replace_if_same_internal(key_data, old_value_data, new_value_data)
 
+
     def set(
         self, key: KeyType, value: ValueType, ttl: float = None, max_idle: float = None
-    ) -> Future[None]:
+    ) -> Awaitable[None]:
         """Puts an entry into this map.
 
         Similar to the put operation except that set doesn't return the old
@@ -1470,7 +1472,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
         return self._set_internal(key_data, value_data, ttl, max_idle)
 
-    def set_ttl(self, key: KeyType, ttl: float) -> Future[None]:
+    def set_ttl(self, key: KeyType, ttl: float) -> Awaitable[None]:
         """Updates the TTL (time to live) value of the entry specified by the
         given key with a new TTL value.
 
@@ -1492,7 +1494,7 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
 
         return self._set_ttl_internal(key_data, ttl)
 
-    def size(self) -> Future[int]:
+    def size(self) -> Awaitable[int]:
         """Returns the number of entries in this map.
 
         Returns:
@@ -1686,23 +1688,23 @@ class Map(Proxy["BlockingMap"], typing.Generic[KeyType, ValueType]):
         request = map_get_codec.encode_request(self.name, key_data, thread_id())
         return self._invoke_on_key(request, key_data, handler)
 
-    def _get_all_internal(self, partition_to_keys, futures=None):
-        if futures is None:
-            futures = []
+    async def _get_all_internal(self, partition_to_keys, tasks=None):
+        tasks = tasks or []
 
         def handler(message):
             entry_data_list = map_get_all_codec.decode_response(message)
             return deserialize_entry_list_in_place(entry_data_list, self._to_object)
 
+        loop = asyncio.get_running_loop()
         for partition_id, key_dict in partition_to_keys.items():
             request = map_get_all_codec.encode_request(self.name, key_dict.values())
-            future = self._invoke_on_partition(request, partition_id, handler)
-            futures.append(future)
+            task = loop.create_task(self._invoke_on_partition(request, partition_id, handler))
+            tasks.append(task)
 
-        def merge(f):
-            return dict(itertools.chain(*f.result()))
-
-        return combine_futures(futures).continue_with(merge)
+        # TODO: handle task failures
+        results = await asyncio.gather(*tasks)
+        results1 = itertools.chain(*results)
+        return dict(results1)
 
     def _remove_internal(self, key_data):
         def handler(message):

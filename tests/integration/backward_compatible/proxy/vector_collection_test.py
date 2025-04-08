@@ -36,113 +36,115 @@ class VectorCollectionTest(SingleMemberTestCase):
         config["cluster_name"] = cls.cluster.id
         return config
 
-    def setUp(self):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
         skip_if_server_version_older_than(self, self.client, "5.5")
         name = random_string()
-        self.client.create_vector_collection_config(name, [IndexConfig("vector", Metric.COSINE, 3)])
-        self.vector_collection = self.client.get_vector_collection(name).blocking()
+        await self.client.create_vector_collection_config(name, [IndexConfig("vector", Metric.COSINE, 3)])
+        self.vector_collection = await self.client.get_vector_collection(name)
 
-    def tearDown(self):
-        self.vector_collection.destroy()
+    async def asyncTearDown(self):
+        await self.vector_collection.destroy()
+        await super().asyncTearDown()
 
-    def test_set(self):
+    async def test_set(self):
         doc = Document("v1", Vector("vector", Type.DENSE, [0.1, 0.2, 0.3]))
-        self.vector_collection.set("k1", doc)
+        await self.vector_collection.set("k1", doc)
 
-    def test_get(self):
-        doc = self.vector_collection.get("k1")
+    async def test_get(self):
+        doc = await self.vector_collection.get("k1")
         self.assertIsNone(doc)
         doc = Document("v1", Vector("vector", Type.DENSE, [0.1, 0.2, 0.3]))
-        self.vector_collection.set("k1", doc)
-        got_doc = self.vector_collection.get("k1")
+        await self.vector_collection.set("k1", doc)
+        got_doc = await self.vector_collection.get("k1")
         self.assert_document_equal(got_doc, doc)
 
-    def test_put(self):
+    async def test_put(self):
         doc = Document("v1", Vector("vector", Type.DENSE, [0.1, 0.2, 0.3]))
-        doc_old = self.vector_collection.put("k1", doc)
+        doc_old = await self.vector_collection.put("k1", doc)
         self.assertIsNone(doc_old)
         doc2 = Document("v1", Vector("vector", Type.DENSE, [0.4, 0.5, 0.6]))
-        doc_old = self.vector_collection.put("k1", doc2)
+        doc_old = await self.vector_collection.put("k1", doc2)
         self.assert_document_equal(doc_old, doc)
 
-    def test_delete(self):
-        doc = self.vector_collection.get("k1")
+    async def test_delete(self):
+        doc = await self.vector_collection.get("k1")
         self.assertIsNone(doc)
         doc = Document("v1", Vector("vector", Type.DENSE, [0.1, 0.2, 0.3]))
-        self.vector_collection.set("k1", doc)
-        self.vector_collection.delete("k1")
-        doc = self.vector_collection.get("k1")
+        await self.vector_collection.set("k1", doc)
+        await self.vector_collection.delete("k1")
+        doc = await self.vector_collection.get("k1")
         self.assertIsNone(doc)
 
-    def test_remove(self):
-        doc = self.vector_collection.get("k1")
+    async def test_remove(self):
+        doc = await self.vector_collection.get("k1")
         self.assertIsNone(doc)
         doc = Document("v1", Vector("vector", Type.DENSE, [0.1, 0.2, 0.3]))
-        self.vector_collection.set("k1", doc)
-        doc2 = self.vector_collection.remove("k1")
+        await self.vector_collection.set("k1", doc)
+        doc2 = await self.vector_collection.remove("k1")
         self.assert_document_equal(doc, doc2)
 
-    def test_put_all(self):
+    async def test_put_all(self):
         doc1 = self.doc1("v1", [0.1, 0.2, 0.3])
         doc2 = self.doc1("v1", [0.2, 0.3, 0.4])
-        self.vector_collection.put_all(
+        await self.vector_collection.put_all(
             {
                 "k1": doc1,
                 "k2": doc2,
             }
         )
-        k1 = self.vector_collection.get("k1")
+        k1 = await self.vector_collection.get("k1")
         self.assert_document_equal(k1, doc1)
-        k2 = self.vector_collection.get("k2")
+        k2 = await self.vector_collection.get("k2")
         self.assert_document_equal(k2, doc2)
 
-    def test_clear(self):
-        doc = self.vector_collection.get("k1")
+    async def test_clear(self):
+        doc = await self.vector_collection.get("k1")
         self.assertIsNone(doc)
         doc = Document("v1", self.vec1([0.1, 0.2, 0.3]))
-        self.vector_collection.set("k1", doc)
-        self.vector_collection.clear()
-        doc = self.vector_collection.get("k1")
+        await self.vector_collection.set("k1", doc)
+        await self.vector_collection.clear()
+        doc = await self.vector_collection.get("k1")
         self.assertIsNone(doc)
 
-    def test_optimize(self):
+    async def test_optimize(self):
         doc = Document("v1", self.vec1([0.1, 0.2, 0.3]))
-        self.vector_collection.set("k1", doc)
+        await self.vector_collection.set("k1", doc)
         # it is hard to observe results of optimize, so just test that the invocation works
-        self.vector_collection.optimize()
+        await self.vector_collection.optimize()
 
-    def test_optimize_with_name(self):
+    async def test_optimize_with_name(self):
         doc = Document("v1", self.vec1([0.1, 0.2, 0.3]))
-        self.vector_collection.set("k1", doc)
+        await self.vector_collection.set("k1", doc)
         # it is hard to observe results of optimize, so just test that the invocation works
-        self.vector_collection.optimize("vector")
+        await self.vector_collection.optimize("vector")
 
-    def test_search_near_vector_include_all(self):
+    async def test_search_near_vector_include_all(self):
         target_doc = self.doc1("v1", [0.3, 0.4, 0.5])
-        self.vector_collection.put_all(
+        await self.vector_collection.put_all(
             {
                 "k1": self.doc1("v1", [0.1, 0.2, 0.3]),
                 "k2": self.doc1("v1", [0.2, 0.3, 0.4]),
                 "k3": target_doc,
             }
         )
-        result = self.vector_collection.search_near_vector(
+        result = await self.vector_collection.search_near_vector(
             self.vec1([0.2, 0.2, 0.3]), limit=1, include_vectors=True, include_value=True
         )
         self.assertEqual(1, len(result))
         self.assert_document_equal(target_doc, result[0])
         self.assertAlmostEqual(0.9973459243774414, result[0].score)
 
-    def test_search_near_vector_include_none(self):
+    async def test_search_near_vector_include_none(self):
         target_doc = self.doc1("v1", [0.3, 0.4, 0.5])
-        self.vector_collection.put_all(
+        await self.vector_collection.put_all(
             {
                 "k1": self.doc1("v1", [0.1, 0.2, 0.3]),
                 "k2": self.doc1("v1", [0.2, 0.3, 0.4]),
                 "k3": target_doc,
             }
         )
-        result = self.vector_collection.search_near_vector(
+        result = await self.vector_collection.search_near_vector(
             self.vec1([0.2, 0.2, 0.3]), limit=1, include_vectors=False, include_value=False
         )
         self.assertEqual(1, len(result))
@@ -151,14 +153,14 @@ class VectorCollectionTest(SingleMemberTestCase):
         self.assertIsNone(result1.value)
         self.assertIsNone(result1.vectors)
 
-    def test_search_near_vector_hint(self):
+    async def test_search_near_vector_hint(self):
         # not empty collection is needed for search to do something
         doc = Document("v1", self.vec1([0.1, 0.2, 0.3]))
-        self.vector_collection.set("k1", doc)
+        await self.vector_collection.set("k1", doc)
 
         # trigger validation error to check if hint was sent
         with self.assertRaises(hazelcast.errors.IllegalArgumentError):
-            self.vector_collection.search_near_vector(
+            await self.vector_collection.search_near_vector(
                 self.vec1([0.2, 0.2, 0.3]),
                 limit=1,
                 include_vectors=False,
@@ -166,147 +168,147 @@ class VectorCollectionTest(SingleMemberTestCase):
                 hints={"partitionLimit": "-1"},
             )
 
-    def test_size(self):
-        self.assertEqual(self.vector_collection.size(), 0)
+    async def test_size(self):
+        self.assertEqual(await self.vector_collection.size(), 0)
         doc = Document("v1", Vector("vector", Type.DENSE, [0.1, 0.2, 0.3]))
-        self.vector_collection.put("k1", doc)
-        self.assertEqual(self.vector_collection.size(), 1)
-        self.vector_collection.clear()
-        self.assertEqual(self.vector_collection.size(), 0)
+        await self.vector_collection.put("k1", doc)
+        self.assertEqual(await self.vector_collection.size(), 1)
+        await self.vector_collection.clear()
+        self.assertEqual(await self.vector_collection.size(), 0)
 
-    def test_backup_count_valid_values_pass(self):
+    async def test_backup_count_valid_values_pass(self):
         skip_if_client_version_older_than(self, "6.0")
         name = random_string()
-        self.client.create_vector_collection_config(
+        await self.client.create_vector_collection_config(
             name, [IndexConfig("vector", Metric.COSINE, 3)], backup_count=2, async_backup_count=2
         )
-        self.client.get_vector_collection(name).blocking()
+        await self.client.get_vector_collection(name)
 
-    def test_backup_count_max_value_pass(self):
+    async def test_backup_count_max_value_pass(self):
         skip_if_client_version_older_than(self, "6.0")
         name = random_string()
-        self.client.create_vector_collection_config(
+        await self.client.create_vector_collection_config(
             name, [IndexConfig("vector", Metric.COSINE, 3)], backup_count=6
         )
-        self.client.get_vector_collection(name).blocking()
+        await self.client.get_vector_collection(name)
 
-    def test_backup_count_min_value_pass(self):
+    async def test_backup_count_min_value_pass(self):
         skip_if_client_version_older_than(self, "6.0")
         name = random_string()
-        self.client.create_vector_collection_config(
+        await self.client.create_vector_collection_config(
             name, [IndexConfig("vector", Metric.COSINE, 3)], backup_count=0
         )
-        self.client.get_vector_collection(name).blocking()
+        await self.client.get_vector_collection(name)
 
-    def test_backup_count_more_than_max_value_fail(self):
+    async def test_backup_count_more_than_max_value_fail(self):
         skip_if_server_version_older_than(self, self.client, "6.0")
         name = random_string()
         # check that the parameter is used by ensuring that it is validated on server side
         # there is no simple way to check number of backups
         with self.assertRaises(hazelcast.errors.IllegalArgumentError):
-            self.client.create_vector_collection_config(
+            await self.client.create_vector_collection_config(
                 name,
                 [IndexConfig("vector", Metric.COSINE, 3)],
                 backup_count=7,
                 async_backup_count=0,
             )
 
-    def test_backup_count_less_than_min_value_fail(self):
+    async def test_backup_count_less_than_min_value_fail(self):
         skip_if_server_version_older_than(self, self.client, "6.0")
         name = random_string()
         with self.assertRaises(hazelcast.errors.IllegalArgumentError):
-            self.client.create_vector_collection_config(
+            await self.client.create_vector_collection_config(
                 name, [IndexConfig("vector", Metric.COSINE, 3)], backup_count=-1
             )
 
-    def test_async_backup_count_max_value_pass(self):
+    async def test_async_backup_count_max_value_pass(self):
         skip_if_client_version_older_than(self, "6.0")
         name = random_string()
-        self.client.create_vector_collection_config(
+        await self.client.create_vector_collection_config(
             name,
             [IndexConfig("vector", Metric.COSINE, 3)],
             backup_count=0,
             async_backup_count=6,
         )
-        self.client.get_vector_collection(name).blocking()
+        await self.client.get_vector_collection(name)
 
-    def test_async_backup_count_min_value_pass(self):
+    async def test_async_backup_count_min_value_pass(self):
         skip_if_client_version_older_than(self, "6.0")
         name = random_string()
-        self.client.create_vector_collection_config(
+        await self.client.create_vector_collection_config(
             name, [IndexConfig("vector", Metric.COSINE, 3)], async_backup_count=0
         )
-        self.client.get_vector_collection(name).blocking()
+        await self.client.get_vector_collection(name)
 
-    def test_async_backup_count_more_than_max_value_fail(self):
+    async def test_async_backup_count_more_than_max_value_fail(self):
         skip_if_server_version_older_than(self, self.client, "6.0")
         name = random_string()
         # check that the parameter is used by ensuring that it is validated on server side
         # there is no simple way to check number of backups
         with self.assertRaises(hazelcast.errors.IllegalArgumentError):
-            self.client.create_vector_collection_config(
+            await self.client.create_vector_collection_config(
                 name,
                 [IndexConfig("vector", Metric.COSINE, 3)],
                 backup_count=0,
                 async_backup_count=7,
             )
 
-    def test_async_backup_count_less_than_min_value_fail(self):
+    async def test_async_backup_count_less_than_min_value_fail(self):
         skip_if_server_version_older_than(self, self.client, "6.0")
         name = random_string()
         with self.assertRaises(hazelcast.errors.IllegalArgumentError):
-            self.client.create_vector_collection_config(
+            await self.client.create_vector_collection_config(
                 name,
                 [IndexConfig("vector", Metric.COSINE, 3)],
                 async_backup_count=-1,
             )
 
-    def test_sync_and_async_backup_count_more_than_max_value_fail(self):
+    async def test_sync_and_async_backup_count_more_than_max_value_fail(self):
         skip_if_server_version_older_than(self, self.client, "6.0")
         name = random_string()
         with self.assertRaises(hazelcast.errors.IllegalArgumentError):
-            self.client.create_vector_collection_config(
+            await self.client.create_vector_collection_config(
                 name,
                 [IndexConfig("vector", Metric.COSINE, 3)],
                 backup_count=4,
                 async_backup_count=3,
             )
 
-    def test_merge_policy_can_be_sent(self):
+    async def test_merge_policy_can_be_sent(self):
         skip_if_client_version_older_than(self, "6.0")
         name = random_string()
-        self.client.create_vector_collection_config(
+        await self.client.create_vector_collection_config(
             name,
             [IndexConfig("vector", Metric.COSINE, 3)],
             merge_policy="DiscardMergePolicy",
             merge_batch_size=1000,
         )
         # validation happens when the collection proxy is created
-        self.client.get_vector_collection(name)
+        await self.client.get_vector_collection(name)
 
-    def test_wrong_merge_policy_fails(self):
+    async def test_wrong_merge_policy_fails(self):
         skip_if_client_version_older_than(self, "6.0")
         skip_if_server_version_older_than(self, self.client, "6.0")
         name = random_string()
         with self.assertRaises(hazelcast.errors.InvalidConfigurationError):
-            self.client.create_vector_collection_config(
+            await self.client.create_vector_collection_config(
                 name, [IndexConfig("vector", Metric.COSINE, 3)], merge_policy="non-existent"
             )
             # validation happens when the collection proxy is created
-            self.client.get_vector_collection(name)
+            await self.client.get_vector_collection(name)
 
-    def test_split_brain_name_can_be_sent(self):
+    async def test_split_brain_name_can_be_sent(self):
         skip_if_client_version_older_than(self, "6.0")
         name = random_string()
-        self.client.create_vector_collection_config(
+        await self.client.create_vector_collection_config(
             name,
             [IndexConfig("vector", Metric.COSINE, 3)],
             # wrong name will be ignored
             split_brain_protection_name="non-existent",
         )
-        col = self.client.get_vector_collection(name)
+        col = await self.client.get_vector_collection(name)
         doc = Document("v1", Vector("vector", Type.DENSE, [0.1, 0.2, 0.3]))
-        col.set("k1", doc)
+        await col.set("k1", doc)
 
     def assert_document_equal(self, doc1, doc2) -> None:
         self.assertEqual(doc1.value, doc2.value)

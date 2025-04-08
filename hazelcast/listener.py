@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import sys
 import threading
@@ -58,44 +59,41 @@ class ListenerService:
         self._compact_schema_service = compact_schema_service
         self._is_smart = config.smart_routing
         self._active_registrations: typing.Dict[str, _ListenerRegistration] = {}
-        self._registration_lock = threading.RLock()
+        self._registration_lock = asyncio.Lock()
         self._event_handlers: typing.Dict[int, typing.Callable] = {}
 
     def start(self):
         self._connection_manager.add_listener(self._connection_added, self._connection_removed)
 
-    def register_listener(
+    async def register_listener(
         self, registration_request, decode_register_response, encode_deregister_request, handler
     ):
-        with self._registration_lock:
+        async with self._registration_lock:
             registration_id = str(uuid4())
             registration = _ListenerRegistration(
                 registration_request, decode_register_response, encode_deregister_request, handler
             )
             self._active_registrations[registration_id] = registration
 
-            futures = []
-            for connection in list(self._connection_manager.active_connections.values()):
-                future = self._register_on_connection(registration_id, registration, connection)
-                futures.append(future)
+            conns = self._connection_manager.active_connections.values()
+            tasks = [asyncio.create_task(self._register_on_connection(registration_id, registration, conn)) for conn in conns]
+            try:
+                # TODO: handle failed tasks
+                await asyncio.wait(tasks)
+            except:
+                # TODO: Remove catch all
+                await self.deregister_listener(registration_id)
+                raise HazelcastError("Listener cannot be added")
+            else:
+                return registration_id
 
-            def handler(f):
-                try:
-                    f.result()
-                    return registration_id
-                except:
-                    self.deregister_listener(registration_id)
-                    raise HazelcastError("Listener cannot be added")
-
-            return combine_futures(futures).continue_with(handler)
-
-    def deregister_listener(self, user_registration_id):
+    async def deregister_listener(self, user_registration_id):
         check_not_none(user_registration_id, "None user_registration_id is not allowed!")
 
-        with self._registration_lock:
+        async with self._registration_lock:
             listener_registration = self._active_registrations.pop(user_registration_id, None)
             if not listener_registration:
-                return ImmediateFuture(False)
+                return False
 
             futures = []
             for (
@@ -139,7 +137,9 @@ class ListenerService:
                 futures.append(invocation.future)
 
             listener_registration.connection_registrations.clear()
-            return combine_futures(futures).continue_with(lambda _: True)
+            # TODO: handle failed futures
+            await asyncio.wait(futures)
+            return True
 
     def handle_client_message(self, message: InboundMessage, correlation_id: int):
         handler = self._event_handlers.get(correlation_id, None)
@@ -164,6 +164,7 @@ class ListenerService:
                 schema = future.result()
                 self._compact_schema_service.register_fetched_schema(schema_id, schema)
             except:
+                # TODO: Remove catch all
                 _logger.exception(
                     f"Failed to call event handler: {handler} with message: {message}"
                 )
@@ -184,7 +185,7 @@ class ListenerService:
     def remove_event_handler(self, correlation_id):
         self._event_handlers.pop(correlation_id, None)
 
-    def _register_on_connection(self, user_registration_id, listener_registration, connection):
+    async def _register_on_connection(self, user_registration_id, listener_registration, connection):
         registration_map = listener_registration.connection_registrations
 
         if connection in registration_map:
@@ -198,33 +199,30 @@ class ListenerService:
             response_handler=lambda m: m,
             urgent=True,
         )
-        self._invocation_service.invoke(invocation)
+        try:
+            response = await self._invocation_service.ainvoke(invocation)
+            server_registration_id = listener_registration.decode_register_response(response)
+            correlation_id = registration_request.get_correlation_id()
+            registration = _EventRegistration(server_registration_id, correlation_id)
+            registration_map[connection] = registration
+        except Exception as e:
+            if connection.live:
+                _logger.exception(
+                    "Listener %s can not be added to a new connection: %s",
+                    user_registration_id,
+                    connection,
+                )
+            raise e
 
-        def callback(f):
-            try:
-                response = f.result()
-                server_registration_id = listener_registration.decode_register_response(response)
-                correlation_id = registration_request.get_correlation_id()
-                registration = _EventRegistration(server_registration_id, correlation_id)
-                registration_map[connection] = registration
-            except Exception as e:
-                if connection.live:
-                    _logger.exception(
-                        "Listener %s can not be added to a new connection: %s",
-                        user_registration_id,
-                        connection,
-                    )
-                raise e
+    async def _connection_added(self, connection):
+        loop = asyncio.get_running_loop()
+        async with self._registration_lock:
+            tasks = [loop.create_task(self._register_on_connection(id, reg, connection)) for id, reg in self._active_registrations.items()]
+            # TODO: handle failed tasks
+            await asyncio.wait(tasks)
 
-        return invocation.future.continue_with(callback)
-
-    def _connection_added(self, connection):
-        with self._registration_lock:
-            for user_reg_id, listener_registration in self._active_registrations.items():
-                self._register_on_connection(user_reg_id, listener_registration, connection)
-
-    def _connection_removed(self, connection):
-        with self._registration_lock:
+    async def _connection_removed(self, connection):
+        async with self._registration_lock:
             for listener_registration in self._active_registrations.values():
                 event_registration = listener_registration.connection_registrations.pop(
                     connection, None

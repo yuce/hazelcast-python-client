@@ -31,9 +31,10 @@ class Proxy(typing.Generic[BlockingProxyType], abc.ABC):
         self._register_listener = listener_service.register_listener
         self._deregister_listener = listener_service.deregister_listener
         self._is_smart = context.config.smart_routing
+        # TODO: make send_schema_and_retry async
         self._send_schema_and_retry = context.compact_schema_service.send_schema_and_retry
 
-    def destroy(self) -> bool:
+    def destroy(self) -> typing.Awaitable[bool]:
         """Destroys this proxy.
 
         Returns:
@@ -49,30 +50,27 @@ class Proxy(typing.Generic[BlockingProxyType], abc.ABC):
     def __repr__(self) -> str:
         return '%s(name="%s")' % (type(self).__name__, self.name)
 
-    def _invoke(self, request, response_handler=_no_op_response_handler):
+    async def _invoke(self, request, response_handler=_no_op_response_handler):
         invocation = Invocation(request, response_handler=response_handler)
-        self._invocation_service.invoke(invocation)
-        return invocation.future
+        return await self._invocation_service.ainvoke(invocation)
 
     def _invoke_on_target(self, request, uuid, response_handler=_no_op_response_handler):
         invocation = Invocation(request, uuid=uuid, response_handler=response_handler)
         self._invocation_service.invoke(invocation)
         return invocation.future
 
-    def _invoke_on_key(self, request, key_data, response_handler=_no_op_response_handler):
+    async def _invoke_on_key(self, request, key_data, response_handler=_no_op_response_handler):
         partition_id = self._partition_service.get_partition_id(key_data)
         invocation = Invocation(
             request, partition_id=partition_id, response_handler=response_handler
         )
-        self._invocation_service.invoke(invocation)
-        return invocation.future
+        return await self._invocation_service.ainvoke(invocation)
 
     def _invoke_on_partition(self, request, partition_id, response_handler=_no_op_response_handler):
         invocation = Invocation(
             request, partition_id=partition_id, response_handler=response_handler
         )
-        self._invocation_service.invoke(invocation)
-        return invocation.future
+        return self._invocation_service.ainvoke(invocation)
 
     @abc.abstractmethod
     def blocking(self) -> BlockingProxyType:

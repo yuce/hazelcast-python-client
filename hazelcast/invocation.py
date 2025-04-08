@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 import functools
@@ -14,7 +15,7 @@ from hazelcast.errors import (
     OperationTimeoutError,
     InvocationMightContainCompactDataError,
 )
-from hazelcast.future import Future
+from hazelcast.future_asyncio import create_future
 from hazelcast.protocol.client_message import InboundMessage
 from hazelcast.protocol.codec import client_local_backup_listener_codec
 from hazelcast.util import AtomicInteger
@@ -63,7 +64,7 @@ class Invocation:
         self.event_handler = event_handler
         self.urgent = urgent
         self.timeout = timeout
-        self.future = Future()
+        self.future = create_future()
         self.sent_connection = None
         self.response_handler = response_handler
         self.backup_acks_received = 0
@@ -110,9 +111,9 @@ class InvocationService:
     def start(self):
         self._start_clean_resources_timer()
 
-    def add_backup_listener(self):
+    async def add_backup_listener(self):
         if self._backup_ack_to_client_enabled:
-            self._register_backup_listener()
+            await self._register_backup_listener()
 
     def handle_client_message(self, message):
         correlation_id = message.get_correlation_id()
@@ -142,6 +143,10 @@ class InvocationService:
         request.set_correlation_id(correlation_id)
         request.set_partition_id(invocation.partition_id)
         self._do_invoke(invocation)
+
+    async def ainvoke(self, invocation):
+        self.invoke(invocation)
+        return await invocation.future
 
     def shutdown(self):
         if self._shutdown:
@@ -262,7 +267,7 @@ class InvocationService:
         self._pending.pop(correlation_id, None)
 
     def _complete_with_error(self, invocation, error):
-        invocation.future.set_exception(error, None)
+        invocation.future.set_exception(error)
         correlation_id = invocation.request.get_correlation_id()
         self._pending.pop(correlation_id, None)
 
@@ -359,15 +364,15 @@ class InvocationService:
         if invocation.request.contains_data:
             raise InvocationMightContainCompactDataError()
 
-    def _register_backup_listener(self):
+    async def _register_backup_listener(self):
         codec = client_local_backup_listener_codec
         request = codec.encode_request()
-        self._listener_service.register_listener(
+        await self._listener_service.register_listener(
             request,
             codec.decode_response,
             lambda reg_id: None,
             lambda m: codec.handle(m, self._backup_event_handler),
-        ).result()
+        )
 
     def _backup_event_handler(self, correlation_id):
         invocation = self._pending.get(correlation_id, None)
@@ -401,7 +406,7 @@ class InvocationService:
             if self._shutdown:
                 return
 
-            now = time.time()
+            now = asyncio.get_running_loop().time()
             for invocation in list(self._pending.values()):
                 connection = invocation.sent_connection
                 if not connection:

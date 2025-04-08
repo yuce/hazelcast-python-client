@@ -9,13 +9,13 @@ from hazelcast.protocol.codec import (
     client_send_schema_codec,
     client_send_all_schemas_codec,
 )
+from hazelcast.reactor_asyncio import AsyncioReactor
 
 if typing.TYPE_CHECKING:
     from hazelcast.cluster import ClusterService
     from hazelcast.config import Config
     from hazelcast.invocation import InvocationService
     from hazelcast.protocol.client_message import OutboundMessage
-    from hazelcast.reactor import AsyncoreReactor
     from hazelcast.serialization.compact import (
         CompactStreamSerializer,
         Schema,
@@ -33,7 +33,7 @@ class CompactSchemaService:
         compact_serializer: "CompactStreamSerializer",
         invocation_service: "InvocationService",
         cluster_service: "ClusterService",
-        reactor: "AsyncoreReactor",
+        reactor: AsyncioReactor,
         config: "Config",
     ):
         self._compact_serializer = compact_serializer
