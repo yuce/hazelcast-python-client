@@ -480,7 +480,7 @@ class HazelcastClient:
         """
         return self._listener_service.deregister_listener(registration_id)
 
-    def get_distributed_objects(self) -> Future[typing.List[Proxy]]:
+    async def get_distributed_objects(self) -> typing.List[Proxy]:
         """Returns all distributed objects such as; queue, map, set, list,
         topic, lock, multimap.
 
@@ -492,22 +492,22 @@ class HazelcastClient:
         """
         request = client_get_distributed_objects_codec.encode_request()
         invocation = Invocation(request, response_handler=lambda m: m)
-        self._invocation_service.invoke(invocation)
+        response = await self._invocation_service.ainvoke(invocation)
 
         local_distributed_object_infos = {
             DistributedObjectInfo(dist_obj.service_name, dist_obj.name)
             for dist_obj in self._proxy_manager.get_distributed_objects()
         }
 
-        response = client_get_distributed_objects_codec.decode_response(invocation.future.result())
+        response = client_get_distributed_objects_codec.decode_response(response)
         for dist_obj_info in response:
             local_distributed_object_infos.discard(dist_obj_info)
-            self._proxy_manager.get_or_create(
+            await self._proxy_manager.get_or_create(
                 dist_obj_info.service_name, dist_obj_info.name, create_on_remote=False
             )
 
         for dist_obj_info in local_distributed_object_infos:
-            self._proxy_manager.destroy_proxy(
+            await self._proxy_manager.destroy_proxy(
                 dist_obj_info.service_name, dist_obj_info.name, destroy_on_remote=False
             )
 
