@@ -513,6 +513,13 @@ class HazelcastClient:
 
         return self._proxy_manager.get_distributed_objects()
 
+    async def get_distributed_objects_info(self) -> list[DistributedObjectInfo]:
+        request = client_get_distributed_objects_codec.encode_request()
+        invocation = Invocation(request, response_handler=lambda m: m)
+        response = await self._invocation_service.ainvoke(invocation)
+        result = client_get_distributed_objects_codec.decode_response(response)
+        return result
+
     async def shutdown(self) -> None:
         """Shuts down this HazelcastClient."""
         with self._shutdown_lock:
