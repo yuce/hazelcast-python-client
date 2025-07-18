@@ -1,6 +1,8 @@
 import asyncio
 import io
+import threading
 from asyncio import AbstractEventLoop, transports
+from threading import get_ident
 
 from hazelcast.connection import Connection
 
@@ -9,24 +11,41 @@ _BUFFER_SIZE = 128000
 
 class AsyncioReactor:
 
-    def __init__(self):
+    def __init__(self, loop=None):
         # TODO: pass loop as an argument
         self._is_live = False
-        try:
+        if loop:
+            self._loop = loop
+        else:
             self._loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._loop = asyncio.new_event_loop()
+            # try:
+            #     self._loop = asyncio.get_running_loop()
+            # except RuntimeError:
+            #     self._loop = asyncio.new_event_loop()
+        self._ident = None
+        self._thread = None
 
     def add_timer(self, delay, callback):
         return self._loop.call_later(delay, callback)
 
     def start(self):
+        t = threading.Thread(target=self._asyncio_loop, daemon=True, name="hazelcast_python_client_reactor")
+        t.start()
+        self._thread = t
+        self._ident = t.ident
         self._is_live = True
 
     def shutdown(self):
         if not self._is_live:
             return
-        pass
+        # TODO: mutex
+        self._is_live = False
+        self._loop.stop()
+        print("RUNNING?", self._loop.is_running())
+        # self._loop.close()
+        if self._ident != get_ident():
+            pass
+            # self._thread.join()
 
     def connection_factory(
         self, connection_manager, connection_id, address, network_config, message_callback
@@ -37,6 +56,7 @@ class AsyncioReactor:
         )
 
     def _asyncio_loop(self):
+        self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 
