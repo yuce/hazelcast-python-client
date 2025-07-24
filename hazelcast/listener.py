@@ -250,21 +250,21 @@ class ClusterViewListenerService:
     def start(self):
         self._connection_manager.add_listener(self._connection_added, self._connection_removed)
 
-    def _connection_added(self, connection):
-        self._try_register(connection)
+    async def _connection_added(self, connection):
+        await self._try_register(connection)
 
-    def _connection_removed(self, connection):
-        self._try_register_to_random_connection(connection)
+    async def _connection_removed(self, connection):
+        await self._try_register_to_random_connection(connection)
 
-    def _try_register_to_random_connection(self, old_connection):
+    async def _try_register_to_random_connection(self, old_connection):
         if self._listener_added_connection is not old_connection:
             return
         self._listener_added_connection = None
         new_connection = self._connection_manager.get_random_connection()
         if new_connection:
-            self._try_register(new_connection)
+            await self._try_register(new_connection)
 
-    def _try_register(self, connection):
+    async def _try_register(self, connection):
         if not self._connection_manager.live:
             # There is no point on trying the register a backup listener
             # if the client is about to shutdown.
@@ -279,15 +279,10 @@ class ClusterViewListenerService:
             request, connection=connection, event_handler=self._handler(connection), urgent=True
         )
         self._cluster_service.clear_member_list_version()
-        self._invocation_service.invoke(invocation)
-
-        def callback(f):
-            try:
-                f.result()
-            except:
-                self._try_register_to_random_connection(connection)
-
-        invocation.future.add_done_callback(callback)
+        try:
+            await self._invocation_service.ainvoke(invocation)
+        except Exception:
+            await self._try_register_to_random_connection(connection)
 
     def _handler(self, connection):
         def handle_partitions_view_event(version, partitions):
