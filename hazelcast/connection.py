@@ -708,9 +708,9 @@ class ConnectionManager:
             if on_connection_opened:
                 try:
                     await on_connection_opened(connection)
-                except:
+                except Exception as e:
                     # TODO: do not catch all!
-                    _logger.exception("Exception in connection listener")
+                    _logger.exception("Exception in connection listener", e)
 
         if not connection.live:
             await self.on_connection_close(connection)
