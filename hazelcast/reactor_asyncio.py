@@ -12,16 +12,15 @@ _BUFFER_SIZE = 128000
 class AsyncioReactor:
 
     def __init__(self, loop=None):
-        # TODO: pass loop as an argument
         self._is_live = False
         if loop:
             self._loop = loop
         else:
-            self._loop = asyncio.get_running_loop()
-            # try:
-            #     self._loop = asyncio.get_running_loop()
-            # except RuntimeError:
-            #     self._loop = asyncio.new_event_loop()
+            # self._loop = asyncio.get_running_loop()
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._loop = asyncio.new_event_loop()
         self._ident = None
         self._thread = None
 
@@ -29,7 +28,7 @@ class AsyncioReactor:
         return self._loop.call_later(delay, callback)
 
     def start(self):
-        t = threading.Thread(target=self._asyncio_loop, daemon=True, name="hazelcast_python_client_reactor")
+        t = threading.Thread(target=self._asyncio_loop, daemon=True, name="hazelcast_reactor")
         t.start()
         self._thread = t
         self._ident = t.ident
