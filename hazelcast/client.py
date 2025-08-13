@@ -2,6 +2,8 @@ import logging
 import sys
 import threading
 import typing
+import uuid
+from typing import Optional
 
 from hazelcast.cluster import ClusterService, _InternalClusterService
 from hazelcast.compact import CompactSchemaService
@@ -22,6 +24,7 @@ from hazelcast.protocol.codec import (
     client_get_distributed_objects_codec,
     client_remove_distributed_object_listener_codec,
     dynamic_config_add_vector_collection_config_codec,
+    jet_upload_job_meta_data_codec,
 )
 from hazelcast.proxy import (
     EXECUTOR_SERVICE,
@@ -557,6 +560,14 @@ class HazelcastClient:
     def sql(self) -> SqlService:
         """Returns a service to execute distributed SQL queries."""
         return self._sql_service
+
+    def submit_jet_job(self, jar_path: str, job_name: str, main_class: str=None, job_parameters: Optional[list[str]]=None):
+        session_id = uuid.uuid4()
+        request = jet_upload_job_meta_data_codec.encode_request(session_id, True, jar_path, "", None, job_name, main_class, job_parameters)
+        invocation = Invocation(request)
+        self._invocation_service.invoke(invocation)
+        invocation.future.result()
+        return session_id
 
     def _create_address_provider(self):
         config = self._config
