@@ -7,7 +7,6 @@ from tests.integration.asyncio.base import SingleMemberTestCase, HazelcastTestCa
 
 
 class PNCounterBasicTest(SingleMemberTestCase):
-
     @classmethod
     def configure_client(cls, config):
         config["cluster_name"] = cls.cluster.id
@@ -58,7 +57,9 @@ class PNCounterBasicTest(SingleMemberTestCase):
         self.pn_counter.reset()
         self.assertNotEqual(old_vector_clock, self.pn_counter._observed_clock)
 
-    async def check_pn_counter_method(self, return_value, expected_return_value, expected_get_value):
+    async def check_pn_counter_method(
+        self, return_value, expected_return_value, expected_get_value
+    ):
         get_value = await self.pn_counter.get()
 
         self.assertEqual(expected_return_value, return_value)
@@ -66,7 +67,6 @@ class PNCounterBasicTest(SingleMemberTestCase):
 
 
 class PNCounterConsistencyTest(unittest.IsolatedAsyncioTestCase, HazelcastTestCase):
-
     async def asyncSetUp(self):
         self.rc = self.create_rc()
         self.cluster = self.create_cluster(self.rc, self.read_cluster_config())
@@ -103,8 +103,6 @@ class PNCounterConsistencyTest(unittest.IsolatedAsyncioTestCase, HazelcastTestCa
 
 
 class PNCounterLiteMemberTest(SingleMemberTestCase):
-
-
     @classmethod
     def configure_client(cls, config):
         config["cluster_name"] = cls.cluster.id
@@ -114,7 +112,9 @@ class PNCounterLiteMemberTest(SingleMemberTestCase):
     def configure_cluster(cls):
         path = os.path.abspath(__file__)
         dir_path = os.path.dirname(path)
-        with open(os.path.join(dir_path, "../../backward_compatible/proxy/hazelcast_litemember.xml")) as f:
+        with open(
+            os.path.join(dir_path, "../../backward_compatible/proxy/hazelcast_litemember.xml")
+        ) as f:
             return f.read()
 
     async def asyncSetUp(self):
@@ -135,22 +135,34 @@ class PNCounterLiteMemberTest(SingleMemberTestCase):
         await self.verify_error_raised(NoDataMemberInClusterError, self.pn_counter.add_and_get, 2)
 
     async def test_get_and_subtract_with_lite_member(self):
-        await self.verify_error_raised(NoDataMemberInClusterError, self.pn_counter.get_and_subtract, 1)
+        await self.verify_error_raised(
+            NoDataMemberInClusterError, self.pn_counter.get_and_subtract, 1
+        )
 
     async def test_subtract_and_get_with_lite_member(self):
-        await self.verify_error_raised(NoDataMemberInClusterError, self.pn_counter.subtract_and_get, 5)
+        await self.verify_error_raised(
+            NoDataMemberInClusterError, self.pn_counter.subtract_and_get, 5
+        )
 
     async def test_get_and_decrement_with_lite_member(self):
-        await self.verify_error_raised(NoDataMemberInClusterError, self.pn_counter.get_and_decrement)
+        await self.verify_error_raised(
+            NoDataMemberInClusterError, self.pn_counter.get_and_decrement
+        )
 
     async def test_decrement_and_get_with_lite_member(self):
-        await self.verify_error_raised(NoDataMemberInClusterError, self.pn_counter.decrement_and_get)
+        await self.verify_error_raised(
+            NoDataMemberInClusterError, self.pn_counter.decrement_and_get
+        )
 
     async def test_get_and_increment(self):
-        await self.verify_error_raised(NoDataMemberInClusterError, self.pn_counter.get_and_increment)
+        await self.verify_error_raised(
+            NoDataMemberInClusterError, self.pn_counter.get_and_increment
+        )
 
     async def test_increment_and_get(self):
-        await self.verify_error_raised(NoDataMemberInClusterError, self.pn_counter.increment_and_get)
+        await self.verify_error_raised(
+            NoDataMemberInClusterError, self.pn_counter.increment_and_get
+        )
 
     async def verify_error_raised(self, error, func, *args):
         with self.assertRaises(error):

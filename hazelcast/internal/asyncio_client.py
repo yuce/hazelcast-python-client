@@ -32,7 +32,8 @@ from hazelcast.internal.asyncio_proxy.manager import (
     REPLICATED_MAP_SERVICE,
     RINGBUFFER_SERVICE,
     SET_SERVICE,
-    VECTOR_SERVICE, PN_COUNTER_SERVICE,
+    VECTOR_SERVICE,
+    PN_COUNTER_SERVICE,
 )
 from hazelcast.internal.asyncio_proxy.base import Proxy
 from hazelcast.internal.asyncio_proxy.executor import Executor

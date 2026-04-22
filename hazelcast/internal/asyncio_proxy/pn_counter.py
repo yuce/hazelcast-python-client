@@ -5,8 +5,11 @@ import random
 from hazelcast.errors import NoDataMemberInClusterError
 from hazelcast.internal.asyncio_cluster import VectorClock
 from hazelcast.internal.asyncio_proxy.base import Proxy
-from hazelcast.protocol.codec import pn_counter_get_codec, pn_counter_add_codec, \
-    pn_counter_get_configured_replica_count_codec
+from hazelcast.protocol.codec import (
+    pn_counter_get_codec,
+    pn_counter_add_codec,
+    pn_counter_get_configured_replica_count_codec,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -85,7 +88,9 @@ class PNCounter(Proxy):
             ConsistencyLostError: if the session guarantees have been lost.
         """
 
-        return await self._invoke_internal(pn_counter_add_codec, delta=delta, get_before_update=True)
+        return await self._invoke_internal(
+            pn_counter_add_codec, delta=delta, get_before_update=True
+        )
 
     async def add_and_get(self, delta: int) -> int:
         """Adds the given value to the current value and returns the updated
@@ -103,7 +108,9 @@ class PNCounter(Proxy):
             ConsistencyLostError: if the session guarantees have been lost.
         """
 
-        return await self._invoke_internal(pn_counter_add_codec, delta=delta, get_before_update=False)
+        return await self._invoke_internal(
+            pn_counter_add_codec, delta=delta, get_before_update=False
+        )
 
     async def get_and_subtract(self, delta: int) -> int:
         """Subtracts the given value from the current value and returns the
@@ -121,7 +128,9 @@ class PNCounter(Proxy):
             ConsistencyLostError: if the session guarantees have been lost.
         """
 
-        return await self._invoke_internal(pn_counter_add_codec, delta=-1 * delta, get_before_update=True)
+        return await self._invoke_internal(
+            pn_counter_add_codec, delta=-1 * delta, get_before_update=True
+        )
 
     async def subtract_and_get(self, delta: int) -> int:
         """Subtracts the given value from the current value and returns the
@@ -209,13 +218,12 @@ class PNCounter(Proxy):
 
         self._observed_clock = VectorClock()
 
-
     async def _invoke_internal(self, codec, **kwargs) -> int:
         delegated_future = asyncio.get_running_loop().create_future()
         await self._set_result_or_error(delegated_future, [], None, codec, **kwargs)
         return await delegated_future
 
-    async  def _set_result_or_error(
+    async def _set_result_or_error(
         self, delegated_future, excluded_addresses, last_error, codec, **kwargs
     ):
         target = await self._get_crdt_operation_target(excluded_addresses)
@@ -248,7 +256,9 @@ class PNCounter(Proxy):
                 target,
             )
             excluded_addresses.append(target)
-            await self._set_result_or_error(delegated_future, excluded_addresses, ex, codec, **kwargs)
+            await self._set_result_or_error(
+                delegated_future, excluded_addresses, ex, codec, **kwargs
+            )
 
     async def _get_crdt_operation_target(self, excluded_addresses):
         if (
