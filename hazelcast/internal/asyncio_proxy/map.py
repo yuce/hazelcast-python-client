@@ -1,10 +1,13 @@
 import asyncio
 import itertools
 import typing
+from contextlib import AbstractAsyncContextManager
 
 from hazelcast.aggregator import Aggregator
 from hazelcast.config import IndexUtil, IndexType, IndexConfig
 from hazelcast.core import SimpleEntryView
+from hazelcast.internal.asyncio_invocation import Invocation
+from hazelcast.internal.context import LockID, LOCK_VAR
 from hazelcast.projection import Projection
 from hazelcast.protocol import PagingPredicateHolder
 from hazelcast.protocol.codec import (
@@ -64,13 +67,13 @@ from hazelcast.protocol.codec import (
     map_set_with_max_idle_codec,
     map_remove_interceptor_codec,
     map_remove_all_codec,
-    map_add_near_cache_invalidation_listener_codec,
+    map_add_near_cache_invalidation_listener_codec, map_lock_codec, map_unlock_codec,
 )
 from hazelcast.internal.asyncio_proxy.base import (
     Proxy,
     EntryEvent,
     EntryEventType,
-    get_entry_listener_flags,
+    get_entry_listener_flags, MAX_SIZE,
 )
 from hazelcast.predicate import Predicate, _PagingPredicate
 from hazelcast.serialization.data import Data
@@ -78,7 +81,6 @@ from hazelcast.types import AggregatorResultType, KeyType, ValueType, Projection
 from hazelcast.serialization.compact import SchemaNotReplicatedError
 from hazelcast.util import (
     check_not_none,
-    thread_id,
     to_millis,
     IterationType,
     deserialize_entry_list_in_place,
@@ -339,7 +341,7 @@ class Map(Proxy, typing.Generic[KeyType, ValueType]):
 
                 >>> employees = await client.get_map("employees")
                 >>> await employees.add_index(attributes=["age"]) # Sorted index for range queries
-                >>> await employees.add_index(attributes=["active"], index_type=IndexType.HASH)) # Hash index for equality predicates
+                >>> await employees.add_index(attributes=["active"], index_type=IndexType.HASH) # Hash index for equality predicates
 
         Index attribute should either have a getter method or be public.
         You should also make sure to add the indexes before adding
@@ -832,7 +834,7 @@ class Map(Proxy, typing.Generic[KeyType, ValueType]):
             entry_view.value = self._to_object(entry_view.value)
             return entry_view
 
-        request = map_get_entry_view_codec.encode_request(self.name, key_data, thread_id())
+        request = map_get_entry_view_codec.encode_request(self.name, key_data, LOCK_VAR.get())
         return await self._invoke_on_key(request, key_data, handler)
 
     async def is_empty(self) -> bool:
@@ -922,6 +924,50 @@ class Map(Proxy, typing.Generic[KeyType, ValueType]):
 
         request = map_load_all_codec.encode_request(self.name, replace_existing_values)
         return await self._invoke(request)
+
+    async def lock(self, key: KeyType, lease_time: float = None) -> None:
+        """Acquires the lock for the specified key infinitely or for the
+        specified lease time if provided.
+
+        You get a lock whether the value is present in the map or not. Other
+        threads (possibly on other systems) would block on their invoke of
+        lock() until the non-existent key is unlocked. If the lock holder
+        introduces the key to the map, the put() operation is not blocked. If
+        a thread not holding a lock on the non-existent key tries to introduce
+        the key while a lock exists on the non-existent key, the put()
+        operation blocks until it is unlocked.
+
+        Scope of the lock is this map only. Acquired lock is only for the key
+        in this map.
+
+        Locks are re-entrant; so, if the key is locked N times, it should be
+        unlocked N times before another thread can acquire it.
+
+        Warning:
+            This method uses ``__hash__`` and ``__eq__`` methods of binary form
+            of the key, not the actual implementations of ``__hash__`` and
+            ``__eq__`` defined in key's class.
+
+        Args:
+            key: The key to lock.
+            lease_time: Time in seconds to wait before releasing the lock.
+        """
+        check_not_none(key, "key can't be None")
+        try:
+            key_data = self._to_data(key)
+        except SchemaNotReplicatedError as e:
+            return self._send_schema_and_retry(e, self.lock, key, lease_time)
+
+        request = map_lock_codec.encode_request(
+            self.name,
+            key_data,
+            LOCK_VAR.get(),
+            to_millis(lease_time),
+            self._reference_id_generator.get_and_increment(),
+        )
+        partition_id = self._context.partition_service.get_partition_id(key_data)
+        invocation = Invocation(request, partition_id=partition_id, timeout=MAX_SIZE)
+        return await self._invocation_service.ainvoke(invocation)
 
     async def project(
         self, projection: Projection[ProjectionType], predicate: Predicate = None
@@ -1424,6 +1470,27 @@ class Map(Proxy, typing.Generic[KeyType, ValueType]):
             return await self._send_schema_and_retry(e, self.try_remove, key, timeout)
         return await self._try_remove_internal(key_data, timeout)
 
+    async def unlock(self, key: KeyType) -> None:
+        """Releases the lock for the specified key.
+
+        It never blocks and returns immediately. If the current thread is the
+        holder of this lock, then the hold count is decremented. If the hold
+        count is zero, then the lock is released.
+
+        Args:
+            key: The key to lock.
+        """
+        check_not_none(key, "key can't be None")
+        try:
+            key_data = self._to_data(key)
+        except SchemaNotReplicatedError as e:
+            return await self._send_schema_and_retry(e, self.unlock, key)
+
+        request = map_unlock_codec.encode_request(
+            self.name, key_data, LOCK_VAR.get(), self._reference_id_generator.get_and_increment()
+        )
+        return await self._invoke_on_key(request, key_data)
+
     async def values(self, predicate: Predicate = None) -> typing.List[ValueType]:
         """Returns a list clone of the values contained in this map or values
         of the entries which are filtered with the predicate if provided.
@@ -1477,15 +1544,21 @@ class Map(Proxy, typing.Generic[KeyType, ValueType]):
 
         return await self._invoke(request, handler)
 
+    def lock_context(self, key: KeyType, lease_time: float = None, id: LockID = None) -> "MapLockContext":
+        check_not_none(key, "key can't be None")
+        if id is None:
+            id = LockID()
+        return MapLockContext(id, self, key, lease_time)
+
     def _contains_key_internal(self, key_data):
-        request = map_contains_key_codec.encode_request(self.name, key_data, thread_id())
+        request = map_contains_key_codec.encode_request(self.name, key_data, LOCK_VAR.get())
         return self._invoke_on_key(request, key_data, map_contains_key_codec.decode_response)
 
     def _get_internal(self, key_data):
         def handler(message):
             return self._to_object(map_get_codec.decode_response(message))
 
-        request = map_get_codec.encode_request(self.name, key_data, thread_id())
+        request = map_get_codec.encode_request(self.name, key_data, LOCK_VAR.get())
         return self._invoke_on_key(request, key_data, handler)
 
     async def _get_all_internal(self, partition_to_keys, tasks=None):
@@ -1506,7 +1579,7 @@ class Map(Proxy, typing.Generic[KeyType, ValueType]):
         def handler(message):
             return self._to_object(map_remove_codec.decode_response(message))
 
-        request = map_remove_codec.encode_request(self.name, key_data, thread_id())
+        request = map_remove_codec.encode_request(self.name, key_data, LOCK_VAR.get())
         return self._invoke_on_key(request, key_data, handler)
 
     def _remove_all_internal(self, predicate_data):
@@ -1515,14 +1588,14 @@ class Map(Proxy, typing.Generic[KeyType, ValueType]):
 
     def _remove_if_same_internal_(self, key_data, value_data):
         request = map_remove_if_same_codec.encode_request(
-            self.name, key_data, value_data, thread_id()
+            self.name, key_data, value_data, LOCK_VAR.get()
         )
         return self._invoke_on_key(
             request, key_data, response_handler=map_remove_if_same_codec.decode_response
         )
 
     def _delete_internal(self, key_data):
-        request = map_delete_codec.encode_request(self.name, key_data, thread_id())
+        request = map_delete_codec.encode_request(self.name, key_data, LOCK_VAR.get())
         return self._invoke_on_key(request, key_data)
 
     async def _put_internal(self, key_data, value_data, ttl, max_idle):
@@ -1531,22 +1604,22 @@ class Map(Proxy, typing.Generic[KeyType, ValueType]):
 
         if max_idle is not None:
             request = map_put_with_max_idle_codec.encode_request(
-                self.name, key_data, value_data, thread_id(), to_millis(ttl), to_millis(max_idle)
+                self.name, key_data, value_data, LOCK_VAR.get(), to_millis(ttl), to_millis(max_idle)
             )
         else:
             request = map_put_codec.encode_request(
-                self.name, key_data, value_data, thread_id(), to_millis(ttl)
+                self.name, key_data, value_data, LOCK_VAR.get(), to_millis(ttl)
             )
         return await self._invoke_on_key(request, key_data, handler)
 
     def _set_internal(self, key_data, value_data, ttl, max_idle):
         if max_idle is not None:
             request = map_set_with_max_idle_codec.encode_request(
-                self.name, key_data, value_data, thread_id(), to_millis(ttl), to_millis(max_idle)
+                self.name, key_data, value_data, LOCK_VAR.get(), to_millis(ttl), to_millis(max_idle)
             )
         else:
             request = map_set_codec.encode_request(
-                self.name, key_data, value_data, thread_id(), to_millis(ttl)
+                self.name, key_data, value_data, LOCK_VAR.get(), to_millis(ttl)
             )
         return self._invoke_on_key(request, key_data)
 
@@ -1556,24 +1629,24 @@ class Map(Proxy, typing.Generic[KeyType, ValueType]):
 
     def _try_remove_internal(self, key_data, timeout):
         request = map_try_remove_codec.encode_request(
-            self.name, key_data, thread_id(), to_millis(timeout)
+            self.name, key_data, LOCK_VAR.get(), to_millis(timeout)
         )
         return self._invoke_on_key(request, key_data, map_try_remove_codec.decode_response)
 
     def _try_put_internal(self, key_data, value_data, timeout):
         request = map_try_put_codec.encode_request(
-            self.name, key_data, value_data, thread_id(), to_millis(timeout)
+            self.name, key_data, value_data, LOCK_VAR.get(), to_millis(timeout)
         )
         return self._invoke_on_key(request, key_data, map_try_put_codec.decode_response)
 
     def _put_transient_internal(self, key_data, value_data, ttl, max_idle):
         if max_idle is not None:
             request = map_put_transient_with_max_idle_codec.encode_request(
-                self.name, key_data, value_data, thread_id(), to_millis(ttl), to_millis(max_idle)
+                self.name, key_data, value_data, LOCK_VAR.get(), to_millis(ttl), to_millis(max_idle)
             )
         else:
             request = map_put_transient_codec.encode_request(
-                self.name, key_data, value_data, thread_id(), to_millis(ttl)
+                self.name, key_data, value_data, LOCK_VAR.get(), to_millis(ttl)
             )
         return self._invoke_on_key(request, key_data)
 
@@ -1583,17 +1656,17 @@ class Map(Proxy, typing.Generic[KeyType, ValueType]):
 
         if max_idle is not None:
             request = map_put_if_absent_with_max_idle_codec.encode_request(
-                self.name, key_data, value_data, thread_id(), to_millis(ttl), to_millis(max_idle)
+                self.name, key_data, value_data, LOCK_VAR.get(), to_millis(ttl), to_millis(max_idle)
             )
         else:
             request = map_put_if_absent_codec.encode_request(
-                self.name, key_data, value_data, thread_id(), to_millis(ttl)
+                self.name, key_data, value_data, LOCK_VAR.get(), to_millis(ttl)
             )
         return self._invoke_on_key(request, key_data, handler)
 
     def _replace_if_same_internal(self, key_data, old_value_data, new_value_data):
         request = map_replace_if_same_codec.encode_request(
-            self.name, key_data, old_value_data, new_value_data, thread_id()
+            self.name, key_data, old_value_data, new_value_data, LOCK_VAR.get()
         )
         return self._invoke_on_key(request, key_data, map_replace_if_same_codec.decode_response)
 
@@ -1601,11 +1674,11 @@ class Map(Proxy, typing.Generic[KeyType, ValueType]):
         def handler(message):
             return self._to_object(map_replace_codec.decode_response(message))
 
-        request = map_replace_codec.encode_request(self.name, key_data, value_data, thread_id())
+        request = map_replace_codec.encode_request(self.name, key_data, value_data, LOCK_VAR.get())
         return self._invoke_on_key(request, key_data, handler)
 
     def _evict_internal(self, key_data):
-        request = map_evict_codec.encode_request(self.name, key_data, thread_id())
+        request = map_evict_codec.encode_request(self.name, key_data, LOCK_VAR.get())
         return self._invoke_on_key(request, key_data, map_evict_codec.decode_response)
 
     def _load_all_internal(self, key_data_list, replace_existing_values):
@@ -1619,7 +1692,7 @@ class Map(Proxy, typing.Generic[KeyType, ValueType]):
             return self._to_object(map_execute_on_key_codec.decode_response(message))
 
         request = map_execute_on_key_codec.encode_request(
-            self.name, entry_processor_data, key_data, thread_id()
+            self.name, entry_processor_data, key_data, LOCK_VAR.get()
         )
         return self._invoke_on_key(request, key_data, handler)
 
@@ -1800,3 +1873,25 @@ async def create_map_proxy(service_name, name, context):
     if nc._near_cache.invalidate_on_change:
         await nc._add_near_cache_invalidation_listener()
     return nc
+
+
+class MapLockContext(AbstractAsyncContextManager):
+
+    def __init__(self, ctx: LockID,  map: Map, key: KeyType, lease_time: float = None):
+        self._ctx = ctx
+        self._map = map
+        self._key = key
+        self._lease_time = lease_time
+        self._token = None
+
+    def clone(self):
+        return MapLockContext(self._ctx, self._map, self._key, self._lease_time)
+
+    async def __aenter__(self):
+        self.token = LOCK_VAR.set(self._ctx.thread_id)
+        await self._map.lock(self._key, self._lease_time)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self._map.unlock(self._key)
+        LOCK_VAR.reset(self.token)

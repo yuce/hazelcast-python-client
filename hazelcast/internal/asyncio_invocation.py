@@ -15,9 +15,9 @@ from hazelcast.errors import (
     OperationTimeoutError,
     InvocationMightContainCompactDataError,
 )
+from hazelcast.internal.asyncio_util import AtomicInteger
 from hazelcast.protocol.client_message import InboundMessage
 from hazelcast.protocol.codec import client_local_backup_listener_codec
-from hazelcast.util import AtomicInteger
 from hazelcast.serialization.compact import SchemaNotFoundError
 
 _logger = logging.getLogger(__name__)

@@ -21,6 +21,7 @@ __all__ = [
 ]
 
 from hazelcast.internal.asyncio_client import HazelcastClient
+from hazelcast.internal.context import LockID
 from hazelcast.internal.asyncio_proxy.executor import Executor
 from hazelcast.internal.asyncio_proxy.list import List
 from hazelcast.internal.asyncio_proxy.map import Map, EntryEventCallable

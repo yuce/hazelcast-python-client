@@ -26,6 +26,7 @@ from hazelcast.errors import (
     ClientOfflineError,
 )
 from hazelcast.internal.asyncio_invocation import Invocation
+from hazelcast.internal.asyncio_util import AtomicInteger
 from hazelcast.lifecycle import LifecycleState
 from hazelcast.protocol.client_message import (
     SIZE_OF_FRAME_LENGTH_AND_FLAGS,
@@ -39,7 +40,6 @@ from hazelcast.protocol.codec import (
     client_ping_codec,
 )
 from hazelcast.util import (
-    AtomicInteger,
     calculate_version,
     UNKNOWN_VERSION,
     member_of_larger_same_version_group,

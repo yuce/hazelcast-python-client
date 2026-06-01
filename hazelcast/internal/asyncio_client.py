@@ -13,6 +13,7 @@ from hazelcast.errors import IllegalStateError, InvalidConfigurationError
 from hazelcast.internal.asyncio_invocation import InvocationService, Invocation
 from hazelcast.internal.asyncio_proxy.pn_counter import PNCounter
 from hazelcast.internal.asyncio_proxy.vector_collection import VectorCollection
+from hazelcast.internal.asyncio_util import AtomicInteger
 from hazelcast.lifecycle import LifecycleService, LifecycleState, _InternalLifecycleService
 from hazelcast.internal.asyncio_listener import ClusterViewListenerService, ListenerService
 from hazelcast.near_cache import NearCacheManager
@@ -37,7 +38,6 @@ from hazelcast.internal.asyncio_proxy.manager import (
     VECTOR_SERVICE,
     PN_COUNTER_SERVICE,
 )
-from hazelcast.internal.asyncio_proxy.base import Proxy
 from hazelcast.internal.asyncio_proxy.executor import Executor
 from hazelcast.internal.asyncio_proxy.list import List
 from hazelcast.internal.asyncio_proxy.map import Map
@@ -52,7 +52,7 @@ from hazelcast.internal.asyncio_reactor import AsyncioReactor
 from hazelcast.serialization import SerializationServiceV1
 from hazelcast.internal.asyncio_statistics import Statistics
 from hazelcast.types import KeyType, MessageType, ValueType, ItemType
-from hazelcast.util import AtomicInteger, RoundRobinLB
+from hazelcast.util import RoundRobinLB
 
 __all__ = ("HazelcastClient",)
 
